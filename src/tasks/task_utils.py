@@ -55,6 +55,75 @@ def segment_image(image, M, N, queries, return_sep = False):
 
 
 
+
+def calculate_iou(box1, box2):
+    """
+    Calculate the Intersection over Union (IoU) of two bounding boxes.
+    
+    Parameters:
+    box1, box2: list or tuple of length 4, in the format [x, y, w, h]
+                (x, y) is the top-left corner, w is the width, and h is the height
+    
+    Returns:
+    float: IoU value
+    """
+    # Convert (x, y, w, h) to (x1, y1, x2, y2)
+    box1_x1, box1_y1, box1_w, box1_h = box1
+    box2_x1, box2_y1, box2_w, box2_h = box2
+
+    box1_x2 = box1_x1 + box1_w
+    box1_y2 = box1_y1 + box1_h
+
+    box2_x2 = box2_x1 + box2_w
+    box2_y2 = box2_y1 + box2_h
+
+    # Calculate intersection coordinates
+    inter_x1 = max(box1_x1, box2_x1)
+    inter_y1 = max(box1_y1, box2_y1)
+    inter_x2 = min(box1_x2, box2_x2)
+    inter_y2 = min(box1_y2, box2_y2)
+
+    # Calculate intersection area
+    inter_width = max(0, inter_x2 - inter_x1)
+    inter_height = max(0, inter_y2 - inter_y1)
+    inter_area = inter_width * inter_height
+
+    # Calculate areas of the bounding boxes
+    box1_area = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
+    box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
+
+    # Calculate IoU
+    iou = inter_area / (box1_area + box2_area - inter_area)
+    
+    return iou
+
+def nms(bboxes, iou_threshold):
+    """
+    Perform non-maximum suppression without scores to remove overlapping bounding boxes.
+    
+    Parameters:
+    bboxes: list of lists or tuples, each containing [x, y, w, h]
+    iou_threshold: float, IoU threshold for suppression
+    
+    Returns:
+    list: indices of bounding boxes to keep
+    """
+    keep = []
+    
+    for i in range(len(bboxes)):
+        box_to_check = bboxes[i]
+        should_keep = True
+        
+        for j in keep:
+            if calculate_iou(box_to_check, bboxes[j]) > iou_threshold:
+                should_keep = False
+                break
+        
+        if should_keep:
+            keep.append(i)
+    
+    return keep
+
 def draw_polygons(image, polygons, color=(255, 0, 0), thickness=2):
     """
     Draws polygons on the given image.
@@ -178,7 +247,12 @@ def are_horizontally_aligned(box1, box2, confidence_interval):
     """
     _, y1_center = calculate_center(box1)
     _, y2_center = calculate_center(box2)
-    return abs(y1_center - y2_center) <= confidence_interval
+
+    x1, y1, w1, h1 = box1
+    x2, y2, w2, h2 = box2
+
+
+    return abs(y1_center - y2_center) <= confidence_interval and (abs((x1 + w1) - x2) <= confidence_interval or abs((x2 + w2) - x1) <= confidence_interval)
 
 def merge_boxes(box1, box2):
 
@@ -249,8 +323,7 @@ def merge_horizontally_aligned_bounding_boxes(boxes, confidence_interval):
     return boxes
 
 
-
-def get_lines_from_bboxes(ordered_merged_boxes:List[Tuple[int, ...]], image_max_width:int)-> List[Tuple[int, ...]]:
+def get_lines_from_bboxes(ordered_merged_boxes:List[Tuple[int, ...]], image_max_width:int, confidence_interval:int)-> List[Tuple[int, ...]]:
 
     """
     Generates horizontal line regions from a list of bounding boxes.
@@ -271,7 +344,6 @@ def get_lines_from_bboxes(ordered_merged_boxes:List[Tuple[int, ...]], image_max_
                                contains four integers (x, y, width, height) indicating the 
                                coordinates and size of the line region.
     """
-     
     lines = []
     for bbox_idx in range(len(ordered_merged_boxes)-1):
         x_act, y_act, w_act, h_act =  ordered_merged_boxes[bbox_idx]
@@ -280,21 +352,44 @@ def get_lines_from_bboxes(ordered_merged_boxes:List[Tuple[int, ...]], image_max_
         bottom_line = y_act + h_act
         next_top_line = y_next
         
-        if bbox_idx == 0 and (abs(bottom_line - next_top_line) > 10):
+        if bbox_idx == 0 and (abs(bottom_line - next_top_line) > confidence_interval):
             continue
 
-
-        if bbox_idx == 0 and (abs(x_act - x_nex) > 50):
-            continue
-        
 
         lines.append([0, y_act , image_max_width, h_act])
 
-        if (bbox_idx+1) == (len(ordered_merged_boxes) -1) and  (abs(bottom_line - next_top_line) < 30):
-            lines.append([0, y_next , image_max_width, h_act])
+        if (bbox_idx+1) == (len(ordered_merged_boxes) -1):
+            lines.append([0, y_next , image_max_width, h_next])
+
 
     return lines
 
+def filter_bounding_boxes(bounding_boxes):
+    """
+    Filters out bounding boxes that are outliers based on their area.
+    
+    Parameters:
+    bounding_boxes (list of tuples): List of bounding boxes, each defined by (x, y, w, h)
+    
+    Returns:
+    list of tuples: Filtered list of bounding boxes
+    """
+    
+    # Calculate the area of each bounding box
+    areas = np.array([w * h for (x, y, w, h) in bounding_boxes])
+
+    
+    # Calculate Q1 (25th percentile) and Q3 (75th percentile)
+    Q1 = np.percentile(areas, 2)
+
+    
+    # Filter out bounding boxes that are outliers
+    filtered_bounding_boxes = [
+        bbox for bbox, area in zip(bounding_boxes, areas)
+        if Q1 <= area
+    ]
+    
+    return filtered_bounding_boxes
 
 def extract_mean_std_from_consecutive_bboxes(bboxes:List[Tuple[int, ...]]):
 
@@ -334,3 +429,7 @@ def extract_mean_std_from_consecutive_bboxes(bboxes:List[Tuple[int, ...]]):
     std_consecutive_distances = np.std(list(mean_distances_bbox.values()))
 
     return mean_distances_bbox, mean_consecutive_distances, std_consecutive_distances
+
+
+
+
