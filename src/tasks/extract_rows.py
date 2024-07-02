@@ -22,6 +22,9 @@ except:
 import os
 import glob
 
+import json
+
+
 
 RESOLUTION_IMAGE = (96, 224)
 QUERIES = ['A piece of an old handwritten document with pen or pencil .',
@@ -355,58 +358,8 @@ def main(list_years:List, basepath:str):
 
 
 if __name__ == "__main__":
-    import json
 
-    main(list_years=[1915], basepath="data/Documents/SFLL")
+    main(list_years=[1930], basepath="data/CED/SFLL")
     exit()
 
 
-
-
-
-    IMAGE_PATH = "data/Documents/SFLL/1881/050000120052046,0009.jpg"
-
-    image = Image.open(IMAGE_PATH).convert("RGB")
-    print("Image with Shape", np.array(image).shape)
-
-    with open("data/Documents/SFLL/1924/graph_gt.json", "rb") as file:
-        gt = json.load(file)
-
-    num_integrants = gt["050000120052059,0021.jpg"]["individus"]
-    
-
-    ## EXAMPLE OF THE FUNCTIONALITY OF EACH FCNTION
-
-    ## TABLE EXTRACTION
-    table_coordinates = extract_table_coordinates(images=[image])
-    print(table_coordinates)
-    x, y, w, h = table_coordinates[-1]
-    img = np.array(image)
-    print()
-    cropped_image = img[y:y+h, x:x+w]
-    cropped_image = Image.fromarray(cropped_image)
-    plt.imshow(cropped_image)
-    plt.show()
-
-    ## ROWS EXTRACTION
-    bboxes_coordinates, polygon_coordinates = extract_bboxes_coordinates(images=[cropped_image], return_polygons=True)
-    max_width_image = np.array(cropped_image).shape[1]
-    image_out = utils.draw_polygons(image=np.array(cropped_image)/255, polygons=polygon_coordinates[0])
-    image_uint8 = (image_out * 255).astype(np.uint8)
-    imagee = Image.fromarray(image_uint8)
-    plt.imshow(imagee)
-    plt.show()
-
-    ## Final lines extraction
-    rows, pol = extract_rows(bboxes=bboxes_coordinates, max_image_width=max_width_image)
-    print(len(rows[0]))
-    len(num_integrants)
-    if len(rows[0]) < num_integrants:
-        print(len(rows[0]))
-        print(num_integrants)
-        rows = substract_headers(image=image, filtered_lines=rows[0])
-    lines_out = utils.draw_polygons(np.array(cropped_image)/255, polygons=pol)
-    image_lines_uint8 = (lines_out * 255).astype(np.uint8)
-    plt.imshow(image_lines_uint8)
-    plt.show()
-    exit()
