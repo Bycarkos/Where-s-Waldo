@@ -341,64 +341,6 @@ class Graphset(Dataset):
 
 
 
-if __name__ == "__main__":
-    import json
-    import glob
-
-    volume_1889_1906 = [Path("data/CED/SFLL/1889"), Path("data/CED/SFLL/1906")]
-
-    entities = ["nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"]
-
-    ## volumes structure
-    volums =  []
-
-    ## Pages Structure
-    for auxiliar_volume in volume_1889_1906:  
-        print("STARTING DOWNLOADING VOLUMES: VOLUME-", auxiliar_volume)
-        pages_path = sorted([f.path for f in os.scandir(auxiliar_volume) if f.is_dir()])
-        with open(Path(auxiliar_volume, "graph_gt_corroborator.json")) as file:
-            graph_gt = json.load(file)
-
-        count= 0
-        pages = []
-        for idx, page_folder in enumerate(pages_path):
-            gt_page = pd.read_csv(page_folder + "/gt_alignement.csv")
-
-
-            ##extract the information of the lines first
-            # condition to remove pages with inconsitencis
-            page_lines = []
-            page = Image.open(page_folder+".jpg")
-
-            n_families = graph_gt[os.path.basename(page_folder)+".jpg"]["families"]
-
-            if len(glob.glob(os.path.join(page_folder, "row_*"))) != graph_gt[os.path.basename(page_folder)+".jpg"]["individus"]:
-                count += 1
-                continue
-            
-            else:
-                lines_page = (glob.glob(os.path.join(page_folder, "row_*")))
-                sorted_lines = sorted_file_names = sorted(lines_page, key=sort_key)
-                with open(page_folder + "/info.json", "rb") as file:
-                    bboxes = json.load(file)["rows_bbox"]
-
-                for idx_line, path_line in enumerate(sorted_lines):
-                    ocr = gt_page.loc[idx_line, entities].values
-                    bbox_line = bboxes[idx_line]
-                    page_lines.append(Line(Path(path_line), bbox_line, bbox_line, ocr))
-
-
-
-            pages.append(Page(Path(page_folder+".jpg"), [0, 0, *page.size ], page_lines, n_families))
-            
-        volums.append(Volume(auxiliar_volume, pages, entities))
-
-
-    pk = {"Noms_harmo":"nom", "cognom1_harmo":"cognom_1", "cognom2_harmo":"cognom_2", "parentesc_har":"parentesc", "ocupacio":"ocupacio"}
-
-    Graph = Graphset(Volumes=volums,auxiliar_entities_pk=pk)
-
-
 
 
 

@@ -1,0 +1,16 @@
+defaults:
+  - _self_
+  - data: [default]
+  - models: [default]
+  - setup: [default]
+
+
+
+
+verbose: True
+log_wandb: True
+
+description: "Primer Run per a veure que tot funciona junt"
+run_name: "Experimental Run"
+task: "attribute graph construction"
+

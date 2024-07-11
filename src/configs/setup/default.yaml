@@ -1,0 +1,26 @@
+optimizer: 
+  _target_ : torch.optim.Adam
+  lr: 1e-4
+
+
+config:
+  batch_size: 128
+  patch_size: 16
+  epochs: 25
+  embedding_size: 128
+  dataset: ${data.dataset.name}
+  lr: ${setup.optimizer.lr}
+  line_encoder_convolutions: ${models.line_encoder.num_hidden_convolutions}
+  line_encoder_hidden_channels: ${models.line_encoder.hidden_channels}
+  edge_encoder_hidden_channels: ${models.edge_encoder.hidden_channels}
+  gnn_encoder_hidden_channels: ${setup.config.embedding_size}
+  convolution_kernel_ratio: ${models.kernel_ratio}
+
+
+
+wandb:
+  project: "tfm"
+  config: ${setup.config}
+  notes: ${description}
+  name: ${run_name}
+  group: ${task}

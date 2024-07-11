@@ -50,7 +50,7 @@ Any Other Comment Styles you'd like can be Specified in the Settings.
 
 
 
-def load_volumes():
+def load_volumes(cfg: DictConfig):
     
     """
     Load and process volume data from specified paths.
@@ -93,15 +93,12 @@ def load_volumes():
     #~ args should be and hydra config about data
     
 
-    #^ Hydra things 
-    entities = ["nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"]
+    entities = cfg.entities #["nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"]
 
-    data_path = Path("data/CED/SFLL")
+    data_path = Path(cfg.path) #Path("data/CED/SFLL")
     
-    volume_years = [1889, 1906]
+    volume_years = cfg.volume_years #[1889, 1906]
     
-    #^
-
     ## * data loading
     
     data_volumes = [Path(data_path / str(year)) for year in (volume_years)]

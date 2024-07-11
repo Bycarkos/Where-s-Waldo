@@ -7,20 +7,20 @@ from torchtyping import TensorType
 from typing import *
 
 
+from omegaconf import DictConfig, OmegaConf
 
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
     
 class HeteroGNN(nn.Module):
-    def __init__(self, hidden_channels, attributes:list, embedding_size: int=128, aggr:str="mean"):
+    def __init__(self, cfg: DictConfig):
 
         """
         Initialize the Heterogeneous Graph Neural Network (HeteroGNN).
 
         Parameters:
         -----------
-        hidden_channels : int
-            The number of hidden channels for the SAGEConv layers.
-        
         attributes : list
             A list of attribute types used in the graph.
         
@@ -34,8 +34,8 @@ class HeteroGNN(nn.Module):
 
         super().__init__()
 
-        attribute_edges =  [("individuals", etype, etype) for etype in attributes]
-        self._attributes = attributes
+        attribute_edges =  [("individuals", etype, etype) for etype in cfg.attributes]
+        self._attributes = cfg.attributes
 
         ### Attributes
         self._ind_attribute_convs = nn.ModuleList()
@@ -43,34 +43,35 @@ class HeteroGNN(nn.Module):
         self._ind_ind_convs = nn.ModuleList()
 
         conv = HeteroConv({
-            attrribute_etype: SAGEConv((-1, -1), hidden_channels, flow="source_to_target") for attrribute_etype in attribute_edges
-        }, aggr=aggr)
+            attrribute_etype: SAGEConv((-1, -1), cfg.embedding_size, flow="source_to_target") for attrribute_etype in attribute_edges
+        }, aggr=cfg.aggr)
 
         self._ind_attribute_convs.append(conv)
         
         
-        
+        self._activation = nn.ReLU(inplace=False)
         
         ### Attributes to individuals 
         conv = HeteroConv({
-            attrribute_etype: SAGEConv((-1, -1), hidden_channels, flow="target_to_source") for attrribute_etype in attribute_edges
-        }, aggr=aggr)
+            attrribute_etype: SAGEConv((-1, -1), cfg.embedding_size, flow="target_to_source") for attrribute_etype in attribute_edges
+        }, aggr=cfg.aggr)
         
         self._attr_ind_convs.append(conv)
 
 
         ### Individuals to Individuals
         conv = HeteroConv({
-            ("individuals", "family", "individuals"): SAGEConv((-1, -1), hidden_channels, flow="source_to_target"),
-            ("individuals", "family", "individuals"): SAGEConv((-1, -1), hidden_channels, flow="target_to_source")
-        }, aggr=aggr)
+            ("individuals", "family", "individuals"): SAGEConv((-1, -1), cfg.embedding_size, flow="source_to_target"),
+            ("individuals", "family", "individuals"): SAGEConv((-1, -1), cfg.embedding_size, flow="target_to_source")
+        }, aggr=cfg.aggr)
 
         self._ind_ind_convs.append(conv)
 
 
-        self._edge_space_projection = {att: nn.Parameter(data=torch.randn(size=(embedding_size, embedding_size)), requires_grad=True).to("cuda") for att in self._attributes}
-        self._edge_space_aggregator = nn.Linear(in_features=2*embedding_size, out_features=embedding_size)
-        self._identity = torch.eye(embedding_size).to("cuda")
+        self._edge_space_projection = {att: nn.Parameter(data=torch.randn(size=(cfg.embedding_size, cfg.embedding_size)), requires_grad=True).to(device=device) for att in self._attributes}
+        
+        self._edge_space_aggregator = nn.Linear(in_features=2*cfg.embedding_size, out_features=cfg.embedding_size)
+        self._identity = torch.eye(cfg.embedding_size).to(device=device)
 
     def apply_edges_on_attributes(self, x_dict: Dict[str, TensorType], 
                                   positional_features: TensorType["batch", "Nattributes", "embedding_size"], 
@@ -108,6 +109,7 @@ class HeteroGNN(nn.Module):
             aggregated_information = self._edge_space_aggregator(aggregation)
 
             x_dict[attribute][population] = aggregated_information
+            x_dict[attribute][population] = self._activation(aggregated_information)
 
 
         return x_dict
@@ -138,9 +140,12 @@ class HeteroGNN(nn.Module):
         for idx, attribute in enumerate(self._attributes):
             inverse_edge_space = x_dict[attribute][population] @ (torch.inverse(self._edge_space_projection[attribute]) + self._identity)
             x_dict[attribute][population] = inverse_edge_space
+            x_dict[attribute][population] = self._activation(inverse_edge_space)
+
 
         return x_dict
 
+## TODO SOlucionar el forward per que hi ha probnlemes amb el backpropagation. ( i think is solve4d)
 
     def forward(self, x_dict: Dict[str, TensorType],
                 edge_index_dict: Dict[Tuple[str, str, str], Adj],
@@ -197,39 +202,39 @@ class HeteroGNN(nn.Module):
         
         The final updated `x_dict` contains the new node features after applying the heterogeneous graph convolutions.
         """
-        
-        ## ^Nota important la variable x_dict s'actualitza totalment, s'ha de tenir en compte alhora d'igualar ses coses, segurament es important afegir variables temp
 
-    
-        print(x_dict.keys())
-        print([value.dtype for value in x_dict.values()])
 
         for convs in self._ind_attribute_convs:
             x_dict = self.apply_edges_on_attributes(x_dict=x_dict, positional_features=edge_attributes, population=population)
-            x_dict = {key: x.relu() for key, x in x_dict.items()}
-
             x_dict_attributes = convs(x_dict, edge_index_dict)
-            x_dict_attributes = {key: x.relu() for key, x in x_dict_attributes.items()}
-            
+            #x_dict_attributes = {key: self._activation(x) for key, x in x_dict_attributes.items()}
+
         x_dict.update(x_dict_attributes)
+
+        #for key, value in x_dict.items():
+        #    if x_dict_attributes.get(key, None) is not None:
+        #        x_dict[key] = x_dict_attributes[key]
         
         for convs in self._attr_ind_convs:
             x_dict = self.apply_edges_on_individuals(x_dict=x_dict, population=population)
-            x_dict = {key: x.relu() for key, x in x_dict.items()}
-
-
             x_dict_individuals = convs(x_dict, edge_index_dict)
-            x_dict_individuals = {key: x.relu() for key, x in x_dict_individuals.items()}
+            #x_dict_individuals = {key: self._activation(x) for key, x in x_dict_individuals.items()}
 
         x_dict.update(x_dict_individuals)
-
+        #for key, value in x_dict.items():
+        #    if x_dict_individuals.get(key, None) is not None:
+        #        x_dict[key] = x_dict_individuals[key]
+        
 
         for conv in self._ind_ind_convs:
             x_dict_family = conv(x_dict=x_dict, edge_index_dict=edge_index_dict)
-            x_dict_family = {key: x.relu() for key, x in x_dict_family.items()}
+            #x_dict_family = {key: self._activation(x) for key, x in x_dict_family.items()}
 
-        
         x_dict.update(x_dict_family)
+ 
+        #for key, value in x_dict.items():
+        #    if x_dict_family.get(key, None) is not None:
+        #        x_dict[key] = x_dict_family[key]
 
         return x_dict
 
