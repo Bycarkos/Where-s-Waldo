@@ -10,7 +10,7 @@ defaults:
 verbose: True
 log_wandb: True
 
-description: "Primer Run per a veure que tot funciona junt"
-run_name: "Experimental Run"
+description: "Primer entrenament amb train i validació, esperem que tot vagi bé."
+run_name: "First Training 25 ephocs"
 task: "attribute graph construction"
 

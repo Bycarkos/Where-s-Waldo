@@ -7,13 +7,13 @@ config:
   batch_size: 128
   patch_size: 16
   epochs: 25
-  embedding_size: 128
+  embedding_size: ${models.common_embedding_size}
   dataset: ${data.dataset.name}
   lr: ${setup.optimizer.lr}
   line_encoder_convolutions: ${models.line_encoder.num_hidden_convolutions}
   line_encoder_hidden_channels: ${models.line_encoder.hidden_channels}
   edge_encoder_hidden_channels: ${models.edge_encoder.hidden_channels}
-  gnn_encoder_hidden_channels: ${setup.config.embedding_size}
+  gnn_encoder_hidden_channels: ${models.common_embedding_size}
   convolution_kernel_ratio: ${models.kernel_ratio}
 
 

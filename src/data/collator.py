@@ -20,6 +20,7 @@ import numpy as np
 
 
 
+
 class FamilyCollator():
     
     """
@@ -45,7 +46,7 @@ class FamilyCollator():
         __iter__(): Iterator to generate batches of subgraphs.
     """
 
-    def __init__(self, graph: Type[Graphset], batch_size:int=64, partition_ration: Tuple[float, ...] = [0.8, 0.1, 0.1], shuffle:bool=True) -> None:
+    def __init__(self, graph: Type[Graphset], batch_size:int=64, partition_ration: Tuple[float, ...] = [0.8, 0.1, 0.1], shuffle:bool=True, mode:str="train") -> None:
         
         """
         Initializes the FamilyCollator with a graph, batch size, partition ratios, and shuffle option.
@@ -65,6 +66,7 @@ class FamilyCollator():
         self._graph_batch = [[] for i in range(batch_size)]
         self._same_as_graph = copy.copy(self._graph_batch)
 
+        self._mode = mode
         #extract type of nodes
 
 
@@ -97,110 +99,6 @@ class FamilyCollator():
         self._ind_nodes_test = self._same_as_test.flatten()
 
 
-
-
-
-    def collate_test(self):
-        
-        """
-        Collates the validation set subgraph.
-
-        Returns:
-            Tuple[Dict, torch.Tensor]: A tuple containing the subgraph and the final nodes.
-        """
-
-        graph_batch = [[] for i in range(self._batch_size)]
-        same_as_graph = copy.copy(graph_batch)
-
-
-        distribution = [ pair for pair in self._same_as_test.numpy().T]
-        random.shuffle(distribution)
-
-        families = self._graph[("individuals", "family", "individuals")].edge_index
-        possible_edges = (self._graph.edge_index_dict.keys())
-
-
-        for idx, pair in enumerate(distribution):
-            same_as_graph[idx % self._batch_size].append(pair)
-            graph_batch[idx % self._batch_size].append(pair)
-
-
-        for batch_idx, batch_pair_nodes in enumerate(same_as_graph):
-            nodes_to_select = torch.from_numpy(np.array(batch_pair_nodes)).flatten().unique()
-            indexes_to_retrive_family = torch.isin(families, nodes_to_select).any(dim=0)
-            final_nodes = families[:, indexes_to_retrive_family].flatten().unique()
-            batch_subgraph, negative_batch_subgraph = self.extract_subgraph(population=final_nodes, edges_type=possible_edges)
-            
-            
-            yield batch_subgraph, negative_batch_subgraph, final_nodes
-    
-    def collate_validation(self):
-        
-        """
-        Collates the validation set subgraph.
-
-        Returns:
-            Tuple[Dict, torch.Tensor]: A tuple containing the subgraph and the final nodes.
-        """
-
-        graph_batch = [[] for i in range(self._batch_size)]
-        same_as_graph = copy.copy(graph_batch)
-
-
-        distribution = [ pair for pair in self._same_as_validation.numpy().T]
-        random.shuffle(distribution)
-
-        families = self._graph[("individuals", "family", "individuals")].edge_index
-        possible_edges = (self._graph.edge_index_dict.keys())
-
-
-        for idx, pair in enumerate(distribution):
-            same_as_graph[idx % self._batch_size].append(pair)
-            graph_batch[idx % self._batch_size].append(pair)
-
-
-        for batch_idx, batch_pair_nodes in enumerate(same_as_graph):
-            nodes_to_select = torch.from_numpy(np.array(batch_pair_nodes)).flatten().unique()
-            indexes_to_retrive_family = torch.isin(families, nodes_to_select).any(dim=0)
-            final_nodes = families[:, indexes_to_retrive_family].flatten().unique()
-            batch_subgraph, negative_batch_subgraph = self.extract_subgraph(population=final_nodes, edges_type=possible_edges)
-            
-            
-            yield batch_subgraph, negative_batch_subgraph, final_nodes
-        
-    
-
-
-
-        
-        """
-        Iterator to generate batches of subgraphs for training.
-
-        Yields:
-            Tuple[Dict, torch.Tensor]: A tuple containing a batch subgraph and the final nodes for each batch.
-        """
-        
-        distribution = [ pair for pair in self._same_as_train.numpy().T]
-        random.shuffle(distribution)
-
-
-        families = self._graph[("individuals", "family", "individuals")].edge_index
-        possible_edges = (self._graph.edge_index_dict.keys())
-        
-
-        for idx, pair in enumerate(distribution):
-            self._same_as_graph[idx % self._batch_size].append(pair)
-            self._graph_batch[idx % self._batch_size].append(pair)
-
-
-        for batch_idx, batch_pair_nodes in enumerate(self._same_as_graph):
-            nodes_to_select = torch.from_numpy(np.array(batch_pair_nodes)).flatten().unique()
-            indexes_to_retrive_family = torch.isin(families, nodes_to_select).any(dim=0)
-            final_nodes = families[:, indexes_to_retrive_family].flatten().unique()
-            batch_subgraph, negative_batch_subgraph = self.extract_subgraph(population=final_nodes, edges_type=possible_edges)
-            
-            
-            yield batch_subgraph, negative_batch_subgraph, final_nodes
 
 
     def extract_subgraph(self, population:List[Tuple[int, int]], edges_type:List[Tuple[str, str, str]]) -> Dict:
@@ -238,10 +136,9 @@ class FamilyCollator():
         
         return subgraph, negative_subgraph
             
-            
         
     
-    def collate_train(self):
+    def __iter__(self):
         
         
         """
@@ -251,20 +148,30 @@ class FamilyCollator():
             Tuple[Dict, torch.Tensor]: A tuple containing a batch subgraph and the final nodes for each batch.
         """
         
-        distribution = [ pair for pair in self._same_as_train.numpy().T]
-        random.shuffle(distribution)
+        graph_batch = [[] for i in range(self._batch_size)]
+        same_as_graph = copy.copy(graph_batch)
 
+        if self._mode == "train":
+            possible_population = self._same_as_train
+        elif self._mode == "validation":
+            possible_population = self._same_as_validation
+
+        else:
+            possible_population = self._same_as_test 
+
+        distribution = [ pair for pair in possible_population.numpy().T]
+        random.shuffle(distribution)
 
         families = self._graph[("individuals", "family", "individuals")].edge_index
         possible_edges = (self._graph.edge_index_dict.keys())
-        
+
 
         for idx, pair in enumerate(distribution):
-            self._same_as_graph[idx % self._batch_size].append(pair)
-            self._graph_batch[idx % self._batch_size].append(pair)
+            same_as_graph[idx % self._batch_size].append(pair)
+            graph_batch[idx % self._batch_size].append(pair)
 
 
-        for batch_idx, batch_pair_nodes in enumerate(self._same_as_graph):
+        for batch_idx, batch_pair_nodes in enumerate(graph_batch):
             nodes_to_select = torch.from_numpy(np.array(batch_pair_nodes)).flatten().unique()
             indexes_to_retrive_family = torch.isin(families, nodes_to_select).any(dim=0)
             final_nodes = families[:, indexes_to_retrive_family].flatten().unique()

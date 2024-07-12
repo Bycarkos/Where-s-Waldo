@@ -78,9 +78,7 @@ Any Other Comment Styles you'd like can be Specified in the Settings.
 
 def batch_step(loader:Type[FamilyCollator], 
                graph_structure:Type[HeteroData], 
-               Line_Encoder: Type[nn.Module], 
-               Edge_Positional_Encoder: Type[nn.Module],
-               Gnn_Encoder: Type[gnn.HeteroGNN],
+               model: Type[nn.Module],
                optimizer: Type[torch.optim.Adam],
                criterion,
                image_reshape: Tuple[int, int], 
@@ -91,76 +89,77 @@ def batch_step(loader:Type[FamilyCollator],
         height, width = image_reshape
         epoch_train_loss = 0
         epoch_entities_losses = {key+"_"+mode+"_loss":0 for key in entities}
-        with torch.autograd.set_detect_anomaly(True):
-            for idx, (edge_index_dict, negative_edge_index_dict, population) in (enumerate(loader)):
-                optimizer.zero_grad()
-                ### All the time work with the same x_dict
-                x_dict = graph_structure.x_dict    
-                images_to_keep = []
+        #with torch.autograd.set_detect_anomaly(True):
+        for idx, (edge_index_dict, negative_edge_index_dict, population) in tqdm.tqdm(enumerate(loader), ascii=True):
+            optimizer.zero_grad()
+            ### All the time work with the same x_dict
+            x_dict = graph_structure.x_dict    
+            images_to_keep = []
 
-                for individual_index in population:
-                    image = graph_structure["image_lines"][individual_index].image()
-                    image = transforms.to_tensor(image)
-                    _, h, w = image.shape
+            for individual_index in population:
+                image = graph_structure["image_lines"][individual_index].image()
+                image = transforms.to_tensor(image)
+                _, h, w = image.shape
 
-                    if w < width:
-                        image = transforms.resize(img=image, size=(height, width))
-                        
-                    else:
-                        image = image[:, :, :width]
-                        image = transforms.resize(img=image, size=(height, width))
+                if w < width:
+                    image = transforms.resize(img=image, size=(height, width))
                     
-                    images_to_keep.append(image)
-
-
-                batch = torch.from_numpy(np.array(images_to_keep)).to(device=device)
-                population = population.to(device=device)
-                x_dict = {key: value.to(device) for key, value in x_dict.items()}
-                edge_index_dict = {key: value.to(device) for key, value in edge_index_dict.items()}
+                else:
+                    image = image[:, :, :width]
+                    image = transforms.resize(img=image, size=(height, width))
                 
-                ## Extract visual information
-                individual_features = Line_Encoder(x=batch)
-                edge_features = Edge_Positional_Encoder(x=batch)
-                
-                # update the information of the individuals 
-                x_dict["individuals"][population] = individual_features
-                
-                features_dict = Gnn_Encoder(x_dict, edge_index_dict, edge_features, population)
+                images_to_keep.append(image)
 
-                x_dict.update(features_dict)
-
-                ### *Task loss
-                loss = 0
-                batch_entites_loss = copy.copy(epoch_entities_losses)
-                for attribute in entities:
-                    edge_similar_name = (attribute, "similar", attribute)
-                    edge_index_similar = edge_index_dict[edge_similar_name].to(device=device)
-                    
-                    
-                    positive_labels = torch.ones(edge_index_similar.shape[1])
-                    
-                    negative_edge_index_similar = negative_edge_index_dict[edge_similar_name].to(device=device)
-                    negative_labels = torch.zeros(negative_edge_index_similar.shape[1])
-                    
-                    gt = torch.cat((positive_labels, negative_labels), dim=0).to(device=device)
-                    edge_index = torch.cat((edge_index_similar, negative_edge_index_similar), dim=1)
-                    x1 = x_dict[attribute][edge_index[0,:]]
-                    x2 = x_dict[attribute][edge_index[1, :]]
-                    loss = loss + criterion(x1, x2, gt)
-                    batch_entites_loss[attribute+"_"+mode+"_loss"] += loss
-
-                loss.backward()
-                optimizer.step()
+            ## Send information to the GPU
+            batch = torch.from_numpy(np.array(images_to_keep)).to(device=device)
+            population = population.to(device=device)
+            x_dict = {key: value.to(device) for key, value in x_dict.items()}
+            edge_index_dict = {key: value.to(device) for key, value in edge_index_dict.items()}
             
+            ## Extract visual information
+            individual_features = model.encode_visual_information(x=batch)
+            edge_features = model.encode_edge_positional_information(x=batch)            
+            x_dict["individuals"][population] = individual_features  # update the information of the individuals 
+
+            
+            x_dict = model.update_embeddings_with_message_passing(x=x_dict, edge_index=edge_index_dict, edge_attributes=edge_features, population=population) #message_passing
+            #x_dict.update(features_dict)
+
+            ### *Task loss
+            loss = 0
+            batch_entites_loss = copy.copy(epoch_entities_losses)
+            for attribute in entities:
+                edge_similar_name = (attribute, "similar", attribute)
+                edge_index_similar = edge_index_dict[edge_similar_name].to(device=device)
+                
+                
+                positive_labels = torch.ones(edge_index_similar.shape[1])
+                
+                negative_edge_index_similar = negative_edge_index_dict[edge_similar_name].to(device=device)
+                negative_labels = torch.zeros(negative_edge_index_similar.shape[1])
+                
+                gt = torch.cat((positive_labels, negative_labels), dim=0).to(device=device)
+                edge_index = torch.cat((edge_index_similar, negative_edge_index_similar), dim=1)
+                x1 = x_dict[attribute][edge_index[0,:]]
+                x2 = x_dict[attribute][edge_index[1, :]]
+                loss += criterion(x1, x2, gt)
+                batch_entites_loss[attribute+"_"+mode+"_loss"] += loss
+
+            loss.backward()
+            optimizer.step()
+            
+            
+        
         epoch_train_loss += loss
         epoch_entities_losses.update(batch_entites_loss)
-
         epoch_entities_losses[mode+"_loss"] = epoch_train_loss
 
         print(f"Epoch {epoch}: Loss: {epoch_train_loss}")
 
         wandb.log(epoch_entities_losses)
-        
+
+        return epoch_train_loss
+    
 
 
 
@@ -202,7 +201,7 @@ def main(cfg: DictConfig):
     #  ^ Hydra things
     batch_size = cfg_data.collator.batch_size
     shuffle = cfg_data.collator.shuffle
-    embedding_size = cfg_setup.config.batch_size
+    embedding_size = cfg_setup.config.embedding_size
     patch_size = cfg_setup.config.patch_size
     epochs = cfg_setup.config.epochs
     # ^ 
@@ -215,10 +214,11 @@ def main(cfg: DictConfig):
     ##? 
 
     #? Define the Collator
-    collator = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle)
-    train_loader = collator.collate_train()
-    val_loader = collator.collate_validation()
-    test_loader = collator.collate_test()
+    collator_train = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="train")
+    collator_validation = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="validation")
+    collator_test = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="test")
+
+
 
     core_graph = Graph._graph
     #? 
@@ -233,45 +233,30 @@ def main(cfg: DictConfig):
     width = int(width.item())
     height = int(height.item())
     
-    ratio = width /height
-    
     kernel_height = int((height*ratio_kernel))
     kernel_width = int(kernel_height * (1-ratio_kernel))
 
-
-    line_encoder = cfg_model.line_encoder
-    edge_encoder = cfg_model.edge_encoder
-    gnn_encoder = cfg_model.gnn_encoder
     ## ** 
     
     ## ^ Model 
-    line_encoder.kernel_height = kernel_height
-    line_encoder.kernel_width = kernel_width
+    cfg_model.line_encoder.kernel_height = kernel_height
+    cfg_model.line_encoder.kernel_width = kernel_width
+    cfg_model.gnn_encoder.attributes = list(pk.values())
 
 
+    model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.HeteroGNN, edge_encoder=cnn.EdgeAttFeatureExtractor, cfg=cfg_model).to(device)
 
-    Line_Encoder = cnn.LineFeatureExtractor(cfg=line_encoder).to(device)
     
-    Edge_Positional_Encoder = cnn.EdgeAttFeatureExtractor(cfg=edge_encoder).to(device=device)
+    #params = list(Line_Encoder.parameters()) + list(Edge_Positional_Encoder.parameters()) + list(Gnn_Encoder.parameters())
     
-    
-    gnn_encoder.attributes = list(pk.values())
-    Gnn_Encoder = gnn.HeteroGNN(cfg = gnn_encoder).to(device=device)
-
-    params = list(Line_Encoder.parameters()) + list(Edge_Positional_Encoder.parameters()) + list(Gnn_Encoder.parameters())
-    
-    optimizer = hydra.utils.instantiate(cfg_setup.optimizer, params=params)
+    optimizer = hydra.utils.instantiate(cfg_setup.optimizer, params=model.parameters())
     criterion = utils.contrastive_loss
     
-    Line_Encoder.train()
-    Edge_Positional_Encoder.train()
-    Gnn_Encoder.train() 
+    model.train()
 
     if cfg.verbose == True:
         print("Configuration of the Models: ")
         bprint(dict(cfg_model))
-
-
 
     if cfg.verbose == True:
         print("Inizialization Done without problemas")
@@ -280,44 +265,60 @@ def main(cfg: DictConfig):
     
     ## ^  
 
+    optimal_loss = 10000
 
+    for epoch in range(epochs):
+        print(f"Epoch {epoch}")
 
-    for epoch in tqdm.tqdm(range(epochs), desc="Training", ascii=True):
-        batch_step(loader=train_loader, graph_structure=core_graph, Line_Encoder=Line_Encoder,
-                   Edge_Positional_Encoder=Edge_Positional_Encoder,
-                   Gnn_Encoder=Gnn_Encoder,
-                   optimizer=optimizer,
-                   criterion=criterion,
-                   image_reshape=(height, width),
-                   entities=list(pk.values()),
-                   epoch=epoch,
-                   mode="train")
+        train_loss  = batch_step(loader=collator_train, graph_structure=core_graph, 
+                                    model=model, 
+                                    criterion=criterion, 
+                                    optimizer=optimizer,
+                                    image_reshape=(height, width), 
+                                    entities=list(pk.values()), 
+                                    epoch=epoch, 
+                                    mode="train")
         
-        wandb.finish()
-        exit()
+        
+        torch.cuda.empty_cache()
+
+
         
         if epoch+1 % 10 == 0:
-            batch_step(loader=val_loader, graph_structure=core_graph, Line_Encoder=Line_Encoder,
-                   Edge_Positional_Encoder=Edge_Positional_Encoder,
-                   Gnn_Encoder=Gnn_Encoder,
-                   optimizer=optimizer,
-                   criterion=criterion,
-                   image_reshape=(height, width),
-                   entities=list(pk.values()),
-                   epoch=epoch,
-                   mode="validation")
+            validation_loss = batch_step(loader=collator_validation, graph_structure=core_graph, 
+                                    model=model, 
+                                    criterion=criterion, 
+                                    optimizer=optimizer,
+                                    image_reshape=(height, width), 
+                                    entities=list(pk.values()), 
+                                    epoch=epoch, 
+                                    mode="validation")
+            
+            if validation_loss < optimal_loss:
+                os.makedirs("./checkpoints", exist_ok=True)
+                dataset_name = cfg_data.dataset.name
+                model_name = f"./checkpoints/{dataset_name}+_mmgcm.pt"
+
+                torch.save(model.state_dict(), model_name)
+
              
 
 
-    batch_step(loader=test_loader, graph_structure=core_graph, Line_Encoder=Line_Encoder,
-            Edge_Positional_Encoder=Edge_Positional_Encoder,
-            Gnn_Encoder=Gnn_Encoder,
-            optimizer=optimizer,
-            criterion=criterion,
-            image_reshape=(height, width),
-            entities=list(pk.values()),
-            epoch=epoch,
-            mode="test")         
+    test_loss = batch_step(loader=collator_test, graph_structure=core_graph, 
+                                    model=model, 
+                                    criterion=criterion,
+                                    optimizer=optimizer, 
+                                    image_reshape=(height, width), 
+                                    entities=list(pk.values()), 
+                                    epoch=epoch, 
+                                    mode="test")         
+    
+    if test_loss < optimal_loss:
+        os.makedirs("./checkpoints", exist_ok=True)
+        dataset_name = cfg_data.dataset.name
+        model_name = f"./checkpoints/{dataset_name}+_mmgcm.pt"
+
+        torch.save(model.state_dict(), model_name)
     
     wandb.finish()
 

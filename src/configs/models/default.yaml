@@ -1,25 +1,25 @@
-
+kernel_ratio : 0.7
+common_embedding_size: 64
 
 line_encoder:
   kernel_height: ???
   kernel_width: ???
-  hidden_channels: 64
-  output_channels: 128
+  hidden_channels: 32
+  output_channels: ${models.common_embedding_size}
   num_hidden_convolutions: 3
 
 
 edge_encoder:
   kernel_height: ${models.line_encoder.kernel_height}
   kernel_width: ${models.line_encoder.kernel_width}
-  hidden_channels: 64
-  edge_embedding_size: 128
+  hidden_channels: 32
+  edge_embedding_size: ${models.common_embedding_size}
   number_of_entities: 5
 
 
 gnn_encoder:
   attributes: ???
-  embedding_size: 128
+  embedding_size: ${models.common_embedding_size}
   aggr: "mean"
 
-kernel_ratio : 0.7
 
