@@ -207,34 +207,21 @@ class HeteroGNN(nn.Module):
         for convs in self._ind_attribute_convs:
             x_dict = self.apply_edges_on_attributes(x_dict=x_dict, positional_features=edge_attributes, population=population)
             x_dict_attributes = convs(x_dict, edge_index_dict)
-            #x_dict_attributes = {key: self._activation(x) for key, x in x_dict_attributes.items()}
 
         x_dict.update(x_dict_attributes)
 
-        #for key, value in x_dict.items():
-        #    if x_dict_attributes.get(key, None) is not None:
-        #        x_dict[key] = x_dict_attributes[key]
-        
         for convs in self._attr_ind_convs:
             x_dict = self.apply_edges_on_individuals(x_dict=x_dict, population=population)
             x_dict_individuals = convs(x_dict, edge_index_dict)
-            #x_dict_individuals = {key: self._activation(x) for key, x in x_dict_individuals.items()}
 
         x_dict.update(x_dict_individuals)
-        #for key, value in x_dict.items():
-        #    if x_dict_individuals.get(key, None) is not None:
-        #        x_dict[key] = x_dict_individuals[key]
         
 
         for conv in self._ind_ind_convs:
             x_dict_family = conv(x_dict=x_dict, edge_index_dict=edge_index_dict)
-            #x_dict_family = {key: self._activation(x) for key, x in x_dict_family.items()}
 
         x_dict.update(x_dict_family)
  
-        #for key, value in x_dict.items():
-        #    if x_dict_family.get(key, None) is not None:
-        #        x_dict[key] = x_dict_family[key]
 
         return x_dict
 

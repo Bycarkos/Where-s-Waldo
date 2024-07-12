@@ -8,17 +8,18 @@ from torch_geometric.typing import Adj
 from torchtyping import TensorType
 from typing import *
 
+from omegaconf import DictConfig
 
 
 class MMGCM(nn.Module):
 
-    def __init__(self, visual_encoder: Type[nn.Module], gnn_encoder: Type[nn.Module], edge_encoder: Optional[Type[nn.Module]] = None) -> None:
-        super(MMGCM).__init__()
+    def __init__(self, cfg:DictConfig, visual_encoder: Type[nn.Module], gnn_encoder: Type[nn.Module], edge_encoder: Optional[Type[nn.Module]] = None) -> None:
+        super(MMGCM, self).__init__()
 
 
-        self._visual_encoder = visual_encoder
-        self._gnn_encoder = gnn_encoder
-        self._edge_encoder = edge_encoder
+        self._visual_encoder = visual_encoder(cfg=cfg.line_encoder)
+        self._gnn_encoder = gnn_encoder(cfg=cfg.gnn_encoder)
+        self._edge_encoder = edge_encoder(cfg = cfg.edge_encoder)
 
 
     def encode_visual_information(self, x: TensorType["batch", "(C, H, W)"]):
