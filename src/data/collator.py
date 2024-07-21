@@ -101,6 +101,10 @@ class FamilyCollator():
 
 
 
+    def _change_mode(self, mode:str="validation"):
+        self._mode = mode
+        
+        
     def extract_subgraph(self, population:List[Tuple[int, int]], edges_type:List[Tuple[str, str, str]]) -> Dict:
         
         """

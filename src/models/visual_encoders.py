@@ -6,7 +6,6 @@ from omegaconf import DictConfig
 
 device = "cuda" if torch.cuda.is_available else "cpu"
 
-# ^ make it configurable when all is done 
 
 #    min_height=kernel_height, max_width=kernel_width, hidden_channels=64, output_channels=128, num_hidden_convolutions=3
 
@@ -27,7 +26,7 @@ class LineFeatureExtractor(nn.Module):
 
         self._list_convolutions = []
 
-        self._list_convolutions.append(nn.Conv2d(in_channels=3, out_channels=self._hidden_channels, kernel_size=(self._min_heigh, self._max_width), device=device))
+        self._list_convolutions.append(nn.Conv2d(in_channels=3, out_channels=self._hidden_channels, kernel_size=(5, 3), device=device))#(self._min_heigh, self._max_width), device=device))
 
         for i in range(self._num_middle_conv):
             self._list_convolutions.append(nn.Conv2d(in_channels=self._hidden_channels, out_channels=self._hidden_channels, kernel_size=(5, 3), device=device))
@@ -58,9 +57,9 @@ class EdgeAttFeatureExtractor(nn.Module):
 
         self._embedding_size = cfg.edge_embedding_size   
 
-        self._conv1 = nn.Conv2d(in_channels=3, out_channels=self._hidden_channels, kernel_size=(self._min_heigh, self._max_width))
-        self._conv2 = nn.Conv2d(in_channels=self._hidden_channels, out_channels=self._output_channels, kernel_size=(3, 5))
-        self._edge_projector_pooling = nn.AdaptiveAvgPool2d(10) ## image which will be with embedding 100
+        self._conv1 = nn.Conv2d(in_channels=3, out_channels=self._hidden_channels, kernel_size=(5, 3))#(self._min_heigh, self._max_width))
+        self._conv2 = nn.Conv2d(in_channels=self._hidden_channels, out_channels=self._output_channels, kernel_size=(5, 3))
+        self._edge_projector_pooling = nn.AdaptiveMaxPool2d(10) ## image which will be with embedding 100
         
         self._edge_projector = nn.Linear(10**2, out_features=self._embedding_size)
 

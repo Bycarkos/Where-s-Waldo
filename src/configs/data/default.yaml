@@ -1,11 +1,15 @@
 dataset:
   path: ${hydra:runtime.cwd}/data/CED/SFLL
-  entities: ["nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"]
+  entities: ["nom", "cognom_1", "cognom_2"]
   volume_years: [1889, 1906]
   name: BALL
 
 
 collator:
   shuffle: True
-  batch_size: 128
+  batch_size: ${setup.config.batch_size}
+
+
+import_data: False
+export_data: False
 

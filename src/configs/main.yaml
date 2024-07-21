@@ -9,8 +9,11 @@ defaults:
 
 verbose: True
 log_wandb: True
+name_checkpoint: "less_complexity_more_family_messages"
 
-description: "Primer entrenament amb train i validació, esperem que tot vagi bé."
-run_name: "First Training 25 ephocs"
+description: "Experiments amb menys complexitat que sembla que són els que millor funcionen"
+run_name: "Redoing the message passing with familis, solved bug"
 task: "attribute graph construction"
+
+
 

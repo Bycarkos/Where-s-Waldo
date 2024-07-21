@@ -54,6 +54,13 @@ from pathlib import Path
 from PIL import Image
 import matplotlib.pyplot as plt
 import copy
+import pickle
+import networkx as nx
+from networkx.algorithms import bipartite
+
+
+import umap
+import umap.plot
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 import pprint
@@ -76,99 +83,32 @@ Any Other Comment Styles you'd like can be Specified in the Settings.
 """
 
 
-def batch_step(loader:Type[FamilyCollator], 
-               graph_structure:Type[HeteroData], 
-               model: Type[nn.Module],
-               optimizer: Type[torch.optim.Adam],
-               criterion,
-               image_reshape: Tuple[int, int], 
-               entities: Tuple[str, ...],
-               epoch: int, 
-               mode:str="train"):
-
-        height, width = image_reshape
-        epoch_train_loss = 0
-        epoch_entities_losses = {key+"_"+mode+"_loss":0 for key in entities}
-        #with torch.autograd.set_detect_anomaly(True):
-        for idx, (edge_index_dict, negative_edge_index_dict, population) in tqdm.tqdm(enumerate(loader), ascii=True):
-            optimizer.zero_grad()
-            ### All the time work with the same x_dict
-            x_dict = graph_structure.x_dict    
-            images_to_keep = []
-
-            for individual_index in population:
-                image = graph_structure["image_lines"][individual_index].image()
-                image = transforms.to_tensor(image)
-                _, h, w = image.shape
-
-                if w < width:
-                    image = transforms.resize(img=image, size=(height, width))
+"""
+                if mode == "validation" or mode == "test":
+                    previous_x_dict = graph_structure.x_dict   
+                    updated_dict = x_dict 
                     
-                else:
-                    image = image[:, :, :width]
-                    image = transforms.resize(img=image, size=(height, width))
-                
-                images_to_keep.append(image)
+                    dirname = f"./plots/shifts/{attribute}/{mode}"
+                    name_file = f"{attribute}_epoch_{epoch}_{idx}_drift.jpg"
+                    fig_path = os.path.join(dirname, name_file)
+                    dict_drift[name_file] = population.cpu().numpy()
+                    
+                    
+                    
+                    x_previous = previous_x_dict[attribute].detach().cpu().numpy()
+                    x_after = updated_dict[attribute].detach().cpu().numpy()
+                            
+                    evaluate_shift(x_previous=x_previous, x_after=x_after, population=population.cpu().numpy(), fig_name=fig_path)
+      
+      
+            if mode == "validation" or mode == "test":
+                with open(f"{pickles_path}/drift_corresp.pkl", "ab") as file:
+                    pickle.dump(dict_drift, file)          
+"""
 
-            ## Send information to the GPU
-            batch = torch.from_numpy(np.array(images_to_keep)).to(device=device)
-            population = population.to(device=device)
-            x_dict = {key: value.to(device) for key, value in x_dict.items()}
-            edge_index_dict = {key: value.to(device) for key, value in edge_index_dict.items()}
-            
-            ## Extract visual information
-            individual_features = model.encode_visual_information(x=batch)
-            edge_features = model.encode_edge_positional_information(x=batch)            
-            x_dict["individuals"][population] = individual_features  # update the information of the individuals 
-
-            
-            x_dict = model.update_embeddings_with_message_passing(x=x_dict, edge_index=edge_index_dict, edge_attributes=edge_features, population=population) #message_passing
-            #x_dict.update(features_dict)
-
-            ### *Task loss
-            loss = 0
-            batch_entites_loss = copy.copy(epoch_entities_losses)
-            for attribute in entities:
-                edge_similar_name = (attribute, "similar", attribute)
-                edge_index_similar = edge_index_dict[edge_similar_name].to(device=device)
-                
-                
-                positive_labels = torch.ones(edge_index_similar.shape[1])
-                
-                negative_edge_index_similar = negative_edge_index_dict[edge_similar_name].to(device=device)
-                negative_labels = torch.zeros(negative_edge_index_similar.shape[1])
-                
-                gt = torch.cat((positive_labels, negative_labels), dim=0).to(device=device)
-                edge_index = torch.cat((edge_index_similar, negative_edge_index_similar), dim=1)
-                x1 = x_dict[attribute][edge_index[0,:]]
-                x2 = x_dict[attribute][edge_index[1, :]]
-                loss += criterion(x1, x2, gt)
-                batch_entites_loss[attribute+"_"+mode+"_loss"] += loss
-
-            loss.backward()
-            optimizer.step()
-            
-            
-        
-        epoch_train_loss += loss
-        epoch_entities_losses.update(batch_entites_loss)
-        epoch_entities_losses[mode+"_loss"] = epoch_train_loss
-
-        print(f"Epoch {epoch}: Loss: {epoch_train_loss}")
-
-        wandb.log(epoch_entities_losses)
-
-        return epoch_train_loss
     
-
-
-
-
-
-
-
-
-
+    
+    
 @hydra.main(config_path="./configs", config_name="main", version_base="1.3.2")
 def main(cfg: DictConfig):
     
@@ -204,23 +144,48 @@ def main(cfg: DictConfig):
     embedding_size = cfg_setup.config.embedding_size
     patch_size = cfg_setup.config.patch_size
     epochs = cfg_setup.config.epochs
+    entities = cfg_data.dataset.entities
     # ^ 
     
     #? Define the dataset
-    Graph = Graphset(Volumes=volumes, auxiliar_entities_pk=pk, add_edge_features=True)
+    if  cfg_data.import_data == True:
+        if os.path.exists("./pickles/graphset.pkl"):
+            with open("./pickles/graphset.pkl", "rb") as file:
+                Graph = pickle.load(file)
+    
+        else:
+            Graph = Graphset(Volumes=volumes, auxiliar_entities_pk=pk, add_edge_features=True)
+            Graph._initialize_image_information()
+            Graph._initialize_edges()
+            
+    else:
+    
+        Graph = Graphset(Volumes=volumes, auxiliar_entities_pk=pk, add_edge_features=True)
+        Graph._initialize_image_information()
+        Graph._initialize_edges()
+        
+    if  cfg_data.export_data == True:
+
+        os.makedirs("./pickles", exist_ok=True)
+        with open("./pickles/graphset.pkl", "wb") as file:
+            pickle.dump(Graph, file)
+        
+    
     Graph._initialize_nodes(embedding_size = embedding_size)
-    Graph._initialize_image_information()
-    Graph._initialize_edges()
+
     ##? 
 
     #? Define the Collator
-    collator_train = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="train")
-    collator_validation = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="validation")
-    collator_test = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="test")
+    ## ! Change the way to initialize the collator (we need to change the mode because we are creating 3 instances)
+    collator = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="train")
+    #collator_validation = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="validation")
+    #collator_test = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="test")
 
 
 
     core_graph = Graph._graph
+    similar_edge_index=core_graph[("nom", "similar", "nom")].edge_index
+    image_lines =  np.array(core_graph["image_lines"])
     #? 
     
     ## ** model things
@@ -234,17 +199,21 @@ def main(cfg: DictConfig):
     height = int(height.item())
     
     kernel_height = int((height*ratio_kernel))
-    kernel_width = int(kernel_height * (1-ratio_kernel))
+    kernel_width = 5#int(kernel_height * (1-ratio_kernel))
 
     ## ** 
     
     ## ^ Model 
     cfg_model.line_encoder.kernel_height = kernel_height
     cfg_model.line_encoder.kernel_width = kernel_width
-    cfg_model.gnn_encoder.attributes = list(pk.values())
+    cfg_model.gnn_encoder.attributes = cfg_data.dataset.entities
+    cfg_model.edge_encoder.number_of_entities = len(entities)
 
-
-    model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.HeteroGNN, edge_encoder=cnn.EdgeAttFeatureExtractor, cfg=cfg_model).to(device)
+    if cfg_model.apply_edge_encoder is False:
+        model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.FamilyAttributeGnn, cfg=cfg_model).to(device)
+    
+    else:
+        model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.FamilyAttributeGnn, edge_encoder=cnn.EdgeAttFeatureExtractor, cfg=cfg_model).to(device)
 
     
     #params = list(Line_Encoder.parameters()) + list(Edge_Positional_Encoder.parameters()) + list(Gnn_Encoder.parameters())
@@ -269,54 +238,71 @@ def main(cfg: DictConfig):
 
     for epoch in range(epochs):
         print(f"Epoch {epoch}")
-
-        train_loss  = batch_step(loader=collator_train, graph_structure=core_graph, 
+        
+        if epoch == 0:
+            collator._change_mode(mode="validation")
+            validation_loss = pipes.batch_step(loader=collator, graph_structure=core_graph, 
                                     model=model, 
                                     criterion=criterion, 
                                     optimizer=optimizer,
                                     image_reshape=(height, width), 
-                                    entities=list(pk.values()), 
-                                    epoch=epoch, 
-                                    mode="train")
-        
-        
-        torch.cuda.empty_cache()
-
-
-        
-        if epoch+1 % 10 == 0:
-            validation_loss = batch_step(loader=collator_validation, graph_structure=core_graph, 
-                                    model=model, 
-                                    criterion=criterion, 
-                                    optimizer=optimizer,
-                                    image_reshape=(height, width), 
-                                    entities=list(pk.values()), 
+                                    entities=entities, 
                                     epoch=epoch, 
                                     mode="validation")
             
             if validation_loss < optimal_loss:
                 os.makedirs("./checkpoints", exist_ok=True)
                 dataset_name = cfg_data.dataset.name
-                model_name = f"./checkpoints/{dataset_name}+_mmgcm.pt"
+                model_name = f"./checkpoints/{dataset_name}_{cfg.name_checkpoint}.pt"
+
+
+                torch.save(model.state_dict(), model_name)
+
+        collator._change_mode(mode="train")
+        train_loss  = pipes.batch_step(loader=collator, graph_structure=core_graph, 
+                                    model=model, 
+                                    criterion=criterion, 
+                                    optimizer=optimizer,
+                                    image_reshape=(height, width), 
+                                    entities=entities, 
+                                    epoch=epoch, 
+                                    mode="train")
+
+        
+        if (epoch +1) % 10 == 0:
+            collator._change_mode(mode="validation")
+            validation_loss = pipes.batch_step(loader=collator, graph_structure=core_graph, 
+                                    model=model, 
+                                    criterion=criterion, 
+                                    optimizer=optimizer,
+                                    image_reshape=(height, width), 
+                                    entities=entities, 
+                                    epoch=epoch, 
+                                    mode="validation")
+            
+            if validation_loss < optimal_loss:
+                os.makedirs("./checkpoints", exist_ok=True)
+                dataset_name = cfg_data.dataset.name
+                model_name = f"./checkpoints/{dataset_name}_{cfg.name_checkpoint}.pt"
 
                 torch.save(model.state_dict(), model_name)
 
              
 
-
-    test_loss = batch_step(loader=collator_test, graph_structure=core_graph, 
+    collator._change_mode(mode="test")
+    test_loss = pipes.batch_step(loader=collator, graph_structure=core_graph, 
                                     model=model, 
                                     criterion=criterion,
                                     optimizer=optimizer, 
                                     image_reshape=(height, width), 
-                                    entities=list(pk.values()), 
+                                    entities=entities, 
                                     epoch=epoch, 
                                     mode="test")         
     
     if test_loss < optimal_loss:
         os.makedirs("./checkpoints", exist_ok=True)
         dataset_name = cfg_data.dataset.name
-        model_name = f"./checkpoints/{dataset_name}+_mmgcm.pt"
+        model_name = f"./checkpoints/{dataset_name}_{cfg.name_checkpoint}.pt"
 
         torch.save(model.state_dict(), model_name)
     

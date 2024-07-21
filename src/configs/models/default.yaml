@@ -1,5 +1,6 @@
 kernel_ratio : 0.7
 common_embedding_size: 64
+apply_edge_encoder: True
 
 line_encoder:
   kernel_height: ???
@@ -12,14 +13,14 @@ line_encoder:
 edge_encoder:
   kernel_height: ${models.line_encoder.kernel_height}
   kernel_width: ${models.line_encoder.kernel_width}
-  hidden_channels: 32
+  hidden_channels: 16
   edge_embedding_size: ${models.common_embedding_size}
-  number_of_entities: 5
+  number_of_entities: ???
 
 
 gnn_encoder:
   attributes: ???
   embedding_size: ${models.common_embedding_size}
-  aggr: "mean"
+  aggr: "add"
 
 
