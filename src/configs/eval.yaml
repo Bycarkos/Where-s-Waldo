@@ -1,0 +1,77 @@
+data:
+
+  dataset:
+    path: data/CED/SFLL
+    volumes: [1889, 1906, 1910, 1915]
+    cut_image: True
+    patch_size: 16
+
+    
+  graph_configuration:
+    attribute_type_of_nodes: ["nom", "cognom_1", "cognom_2"]
+    entity_type_of_nodes: ["individual", "line"]
+    attribute_edges: ["nom", "cognom_1", "cognom_2"]
+    entity_edges : ["same_as", "family"]
+    node_embedding_size: ${models.common_configuration.embedding_size}
+    edge_embedding_size: ${models.common_configuration.embedding_size}
+
+  collator:
+    shuffle: True
+    batch_size: 256
+    partitions_ratio: [0.8, 0.1, 0.1]
+
+
+models:
+
+  add_visual_encoder: True
+  add_language: False
+
+  name_checkpoint: "MMGC_Experiment_1_New_Edge_PE_Attention/MMGC_Experiment_1_New_Edge_PE_Attention_train_199"
+
+  common_configuration:
+    embedding_size: 128
+
+  visual_encoder:
+    input_channels: 3
+    hidden_channels: 16
+    output_channels: ${models.common_configuration.embedding_size}
+    number_of_hidden_convolutions: 1
+    kernel_height: [5, 5, 5]
+    kernel_width: [3, 3, 3]
+
+  edge_visual_encoder:
+    patch_size: ${setup.configuration.patch_size}
+    kernel_height: [5, 5]
+    kernel_width: [3, 3]
+    input_channels: 3
+    hidden_channels: 16
+    output_channels: ${models.common_configuration.embedding_size}
+    number_of_different_edges: ${data.graph_configuration.attribute_edges}
+    positional_max_length: 10000
+    input_atention_mechanism: ???
+    add_attention: True
+
+  gnn_encoder:
+
+    add_backward: True
+
+    forward_attribute_gnn_encoder:
+      embedding_size: ${models.common_configuration.embedding_size}
+      node_types: ${data.graph_configuration.attribute_type_of_nodes}
+
+    backward_attribute_gnn_encoder:
+      embedding_size: ${models.common_configuration.embedding_size}
+      node_types: ${data.graph_configuration.attribute_type_of_nodes}
+
+
+setup:
+
+  configuration:
+    batch_size: ${data.collator.batch_size}
+    patch_size: 16
+    embedding_size: ${models.common_configuration.embedding_size}
+    compute_loss_on: ["nom", "cognom_1", "cognom_2", individual] 
+
+
+
+

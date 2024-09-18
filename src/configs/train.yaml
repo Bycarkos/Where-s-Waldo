@@ -1,0 +1,118 @@
+verbose: True
+log_wandb: True
+
+
+data:
+
+  import_data: True
+  export_data: True
+
+  dataset:
+    path: ${hydra:runtime.cwd}/data/CED/SFLL
+    volumes: [1889, 1906, 1910, 1915]
+    patch_size: 16
+    cut_image: True
+
+
+  graph_configuration:
+    attribute_type_of_nodes: ["nom", "cognom_1", "cognom_2"]
+    entity_type_of_nodes: ["individual", "line"]
+    attribute_edges: ["nom", "cognom_1", "cognom_2"]
+    entity_edges : ["same_as", "family"]
+    node_embedding_size: ${models.common_configuration.embedding_size}
+    edge_embedding_size: ${models.common_configuration.embedding_size}
+
+  collator:
+    shuffle: True
+    batch_size: 256
+    partitions_ratio: [0.8, 0.1, 0.1]
+
+
+
+models:
+
+
+  finetune: False
+  add_visual_encoder: True
+  add_language: False
+  name_checkpoint: "MMGC_Experiment_1_New_Edge_PE_Attention_language"
+
+  common_configuration:
+    embedding_size: 128
+
+  
+  
+  language_encoder:
+    embedding_size: 128
+    model_type: fasttext
+    
+
+  
+  visual_encoder:
+    input_channels: 3
+    hidden_channels: 16
+    output_channels: ${models.common_configuration.embedding_size}
+    number_of_hidden_convolutions: 1
+    kernel_height: [5, 5, 5]
+    kernel_width: [3, 3, 3]
+
+  edge_visual_encoder:
+
+    patch_size: ${setup.configuration.patch_size}
+    kernel_height: [5, 5]
+    kernel_width: [3, 3]
+    input_channels: 3
+    hidden_channels: 16
+    output_channels: ${models.common_configuration.embedding_size}
+    number_of_different_edges: ${data.graph_configuration.attribute_edges}
+    positional_max_length: 10000
+    input_atention_mechanism: ???
+    add_attention: True
+
+  gnn_encoder:
+
+    add_backward: True
+
+    forward_attribute_gnn_encoder:
+      embedding_size: ${models.common_configuration.embedding_size}
+      node_types: ${data.graph_configuration.attribute_type_of_nodes}
+
+    backward_attribute_gnn_encoder:
+      embedding_size: ${models.common_configuration.embedding_size}
+      node_types: ${data.graph_configuration.attribute_type_of_nodes}
+
+
+setup:
+
+
+
+  configuration:
+    optimize_task: Loss
+    batch_size: ${data.collator.batch_size}
+    patch_size: 16
+    epochs: 200
+    embedding_size: ${models.common_configuration.embedding_size}
+    dataset: BALL
+    lr: 1e-4
+    visual_encoder_convolutions: ${models.visual_encoder.number_of_hidden_convolutions}
+    visual_encoder_hidden_channels: ${models.visual_encoder.hidden_channels}
+    edge_visual_encoder_hidden_channels: ${models.edge_visual_encoder.hidden_channels}
+    compute_loss_on: ["nom", "cognom_1", "cognom_2", "individual"]
+
+
+
+  optimizer:
+    _target_: torch.optim.Adam
+    lr: ${setup.configuration.lr}
+
+  
+  wandb:
+    project: "tfm"
+    config: ${setup.configuration}
+    notes: "Experiment 1"
+    name: "Experiment 1 with positional embedding no Attention and language"
+    group: "Attention Experiments Experiment 1"
+
+
+
+
