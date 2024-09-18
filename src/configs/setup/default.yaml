@@ -6,7 +6,7 @@ optimizer:
 config:
   batch_size: 64
   patch_size: 16
-  epochs: 100
+  epochs: 200
   embedding_size: ${models.common_embedding_size}
   dataset: ${data.dataset.name}
   lr: ${setup.optimizer.lr}

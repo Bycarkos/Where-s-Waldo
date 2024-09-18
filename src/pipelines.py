@@ -1,7 +1,6 @@
 ## Dataset Things
 from data.volumes import Volume, Page, Line
-from data.dataset import Graphset
-from data.collator import FamilyCollator
+from data.graphset import Graphset
 
 import data.volumes as dv
 
@@ -12,14 +11,24 @@ from models import visual_encoders as cnn
 from models.graph_construction_model import MMGCM
 
 
+import utils
+import visualizations as visu
+import tasks.record_linkage as rl
 
 ## Common packages
 import torch.nn as nn
 import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as transforms
+from torch.utils.data import DataLoader
 
 from torch_geometric.data import HeteroData
+import torch_geometric.utils as tutils
+
+
+from pytorch_metric_learning import miners, losses
+
+
 
 ## Typing Packages
 from typing import *
@@ -30,6 +39,8 @@ from omegaconf import DictConfig, OmegaConf
 
 
 import tqdm
+
+import fasttext
 
 ## Common packages
 import os
@@ -45,7 +56,12 @@ import networkx as nx
 from networkx.algorithms import bipartite
 import numpy as np
 import wandb
-import cv2 as cv
+import itertools
+import random
+
+
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 
 
@@ -55,6 +71,7 @@ import umap.plot
 device = "cuda" if torch.cuda.is_available() else "cpu"
 import pprint
 from beeprint import pp as bprint
+import pdb
 
 
 
@@ -116,11 +133,11 @@ def load_volumes(cfg: DictConfig):
     #~ args should be and hydra config about data
     
 
-    entities = cfg.entities #["nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"]
+    entities = cfg.graph_configuration.attribute_type_of_nodes #["nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"]
 
-    data_path = Path(cfg.path) #Path("data/CED/SFLL")
+    data_path = Path(cfg.dataset.path) #Path("data/CED/SFLL")
     
-    volume_years = cfg.volume_years #[1889, 1906]
+    volume_years = cfg.dataset.volumes #[1889, 1906]
     
     ## * data loading
     
@@ -141,29 +158,44 @@ def load_volumes(cfg: DictConfig):
             
             ## ?extract the information of the lines first
             page_lines = []
-            page = Image.open(page_folder+".jpg")
+            #page = Image.open(page_folder+".jpg")
             n_families = graph_gt[os.path.basename(page_folder)+".jpg"]["families"]
+            
+            with open(page_folder + "/info.json", "rb") as file:
+                load_file = json.load(file) 
+                if load_file.get("rows_bbox", None) is None:
+                    bboxes = []
+                else:
+                    bboxes = load_file["rows_bbox"]
+                    
+                page_bbox = load_file["page_bbox"]
+            
             
             #? condition to remove pages with inconsitencis
             if len(glob.glob(os.path.join(page_folder, "row_*"))) != graph_gt[os.path.basename(page_folder)+".jpg"]["individus"]:
+                print(os.path.basename(page_folder)+".jpg")
                 continue
             
             else:
+                percentil_85 = int(np.percentile(np.array(bboxes)[:,-1], 90))
+
                 lines_page = (glob.glob(os.path.join(page_folder, "row_*")))
-                sorted_lines = sorted_file_names = sorted(lines_page, key=dv.sort_key)
+                sorted_lines = sorted(lines_page, key=dv.sort_key)
                 
                 #? Extract groundTruth
-                with open(page_folder + "/info.json", "rb") as file:
-                    bboxes = json.load(file)["rows_bbox"]
-                    
+
+                
                 for idx_line, path_line in enumerate(sorted_lines):
+                    
+                    
                     ocr = gt_page.loc[idx_line, entities].values
                     bbox_line = bboxes[idx_line]
+                    bbox_line[-1] = percentil_85
                     page_lines.append(Line(Path(path_line), bbox_line, bbox_line, ocr))
             
-            pages.append(Page(Path(page_folder+".jpg"), [0, 0, *page.size ], page_lines, n_families))
+            pages.append(Page(Path(page_folder+".jpg"), page_bbox, page_lines, n_families))
             
-        volums.append(Volume(auxiliar_volume, pages, entities))
+        volums.append(Volume(auxiliar_volume, pages, auxiliar_volume, entities))
 
     return volums
 
@@ -171,15 +203,84 @@ def load_volumes(cfg: DictConfig):
 
 
 
-def batch_step(loader:Type[FamilyCollator], 
-               graph_structure:Type[HeteroData], 
+
+@torch.no_grad()
+def evaluate(loader: Type[DataLoader],
+             graph: Type[HeteroData],
+             model: Type[nn.Module],
+             criterion: Type[nn.Module],
+             entities:list,
+             language_distillation:bool=False):
+
+
+    model.eval()
+
+    attribute_embeddings = graph.x_attributes.to(device)
+    entity_embeddings = graph.x_entity.to(device)
+
+    core_graph = graph
+    if language_distillation:
+        x_ocr = torch.from_numpy(np.array(graph.x_language)).to(device)
+
+
+    ## Attribute embeddings Extraction 
+    for idx, dict_images in tqdm.tqdm(enumerate(loader), desc="Extracting the embeddings from the model"):
+        images = dict_images["image_lines"].to(device)
+        ocr_indexes = dict_images["ocrs"].to(device)
+        population = dict_images["population"].to(device)
+
+        attribute_representation, individual_embeddings = model(x=images)#.encode_attribute_information(image_features=image_features, edge_attributes=edge_features) #message_passing
+        attribute_embeddings[population] = attribute_representation
+        if individual_embeddings is not None:
+            entity_embeddings[population, 0] = individual_embeddings
+            
+            
+        loss = 0
+        edges_to_keep = [(attribute, "similar", attribute) for attribute in entities]
+        subgraph = utils.extract_subgraph(graph=graph, population=population, edges_to_extract=edges_to_keep)
+        for idx, attribute in enumerate(entities):
+            
+
+            edge_similar_name = (attribute, "similar", attribute)
+            similar_population = subgraph[edge_similar_name].flatten().unique().to(device)                
+            labels = torch.isin(population, similar_population).type(torch.int32)
+            if attribute == "individual":
+                embeddings = individual_embeddings
+                
+            else:
+                embeddings = attribute_representation[:, idx,:]
+            
+                
+                if language_distillation:
+
+                    selected_language_embeddings_idx = ocr_indexes[:, idx].type(torch.int32) 
+                    language_embeddings = x_ocr[selected_language_embeddings_idx,:]
+
+                    labels = torch.cat((labels, labels), dim=0)
+                    embeddings = torch.cat((embeddings, language_embeddings), dim=0)
+
+            loss_attribute = criterion(embeddings, labels)
+            loss += (loss_attribute)
+        
+
+    print("VALIDATION LOSS: ", loss)
+    
+    return loss
+
+
+
+
+
+
+
+def batch_step(loader, 
+               graph:Type[HeteroData], 
                model: Type[nn.Module],
                optimizer: Type[torch.optim.Adam],
                criterion,
-               image_reshape: Tuple[int, int], 
                entities: Tuple[str, ...],
-               epoch: int, 
-               mode:str="train"):
+               epoch: int,
+               language_distillation:bool=False):
 
         """
         Perform a single training or evaluation step on a batch of data.
@@ -212,182 +313,79 @@ def batch_step(loader:Type[FamilyCollator],
         """
 
 
+        
 
-
-        if mode == "train":
-            model.train()
+        model.train()
             
-        else:
-            model.eval()
+        miner = miners.PairMarginMiner(pos_margin=0.2, neg_margin=0.8)
+        
 
-        height, width = image_reshape
+
+        criterion = losses.TripletMarginLoss(margin=0.2,
+                        swap=False,
+                        smooth_loss=False,
+                        triplets_per_anchor="all")
+        
         epoch_train_loss = 0
-        epoch_entities_losses = {key+"_"+mode+"_loss":0 for key in entities}
+        epoch_entities_losses = {key+"_train_loss":0 for key in entities}
 
-        for idx, (edge_index_dict, negative_edge_index_dict, population) in tqdm.tqdm(enumerate(loader), ascii=True):
+        if language_distillation: 
+            x_ocr = torch.from_numpy(np.array(graph.x_language)).to(device)
+
+        
+        for idx, dict_images in tqdm.tqdm(enumerate(loader), ascii=True):
             optimizer.zero_grad()
-            ### All the time work with the same x_dict
-            x_dict = graph_structure.x_dict    
-            images_to_keep = []
 
-            for individual_index in population:
-                image = graph_structure["image_lines"][individual_index]._path
-                image = cv.imread(image)
-                #plt.imsave("./plots/original.jpg", image[:,:,::-1])
-                
-                image = transforms.to_tensor(image)
-                _, h, w = image.shape
+            images = dict_images["image_lines"].to(device)
+            ocr_indexes = dict_images["ocrs"].to(device)
+            population = dict_images["population"].to(device)
 
-                if w < width:
-                    image = transforms.resize(img=image, size=(height, width))
-                    
-                else:
-                    image = image[:, :, :width]
-                    image = transforms.resize(img=image, size=(height, width))
-                    
-                
-                image = image[:, :, :width//2]
-                plotting_image = torch.permute(image, (1,2,0))
-                #plt.imsave("./plots/test.jpg", plotting_image.numpy()[:,:,::-1])
-
-                images_to_keep.append(image)
-
-            ## Send information to the GPU
-            batch = torch.from_numpy(np.array(images_to_keep)).to(device=device)
-            population = population.to(device=device)
-            x_dict = {key: value.to(device) for key, value in x_dict.items()}
-            edge_index_dict = {key: value.to(device) for key, value in edge_index_dict.items()}
+            attribute_representation, individual_embeddings = model(x=images)#.encode_attribute_information(image_features=image_features, edge_attributes=edge_features) #message_passing
             
-            if mode == "train":
-                ## Extract visual information
-                individual_features = model.encode_visual_information(x=batch)
-                x_dict["individuals"][population] = individual_features  # update the information of the individuals 
-
-                if model._apply_edges is not False:
-                    edge_features = model.encode_edge_positional_information(x=batch)    
-                else:
-                    edge_features = None
-                             
-                x_dict = model.encode_attribute_information(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attributes=edge_features, population=population) #message_passing
                 
-            else:
-                with torch.no_grad():
-                    individual_features = model.encode_visual_information(x=batch)
-                    x_dict["individuals"][population] = individual_features  # update the information of the individuals 
-                    if model._apply_edges is not False:
-                        edge_features = model.encode_edge_positional_information(x=batch)    
-                    else:
-                        edge_features = None
-                    
-                    x_dict = model.encode_attribute_information(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attributes=edge_features, population=population) #message_passing
-                    
             ### *Task loss
             loss = 0
             batch_entites_loss = copy.copy(epoch_entities_losses)
-            for attribute in entities:
+            edges_to_keep = [(attribute, "similar", attribute) for attribute in entities]
+            subgraph = utils.extract_subgraph(graph=graph, population=population, edges_to_extract=edges_to_keep)
+            for idx, attribute in enumerate(entities):
+                
 
                 edge_similar_name = (attribute, "similar", attribute)
-                edge_index_similar = edge_index_dict[edge_similar_name].to(device=device)
-                
-                
-                positive_labels = torch.ones(edge_index_similar.shape[1])
-                
-                negative_edge_index_similar = negative_edge_index_dict[edge_similar_name].to(device=device)
-                negative_labels = torch.zeros(negative_edge_index_similar.shape[1])
-                
-                gt = torch.cat((positive_labels, negative_labels), dim=0).to(device=device)
-                edge_index = torch.cat((edge_index_similar, negative_edge_index_similar), dim=1)
-                x1 = x_dict[attribute][edge_index[0,:]]
-                x2 = x_dict[attribute][edge_index[1, :]]
-                actual_loss = criterion(x1, x2, gt)
-                loss += actual_loss
-                batch_entites_loss[attribute+"_"+mode+"_loss"] += actual_loss
+                similar_population = subgraph[edge_similar_name].flatten().unique().to(device)                
+                labels = torch.isin(population, similar_population).type(torch.int32)
+                if attribute == "individual":
+                    embeddings = individual_embeddings
+                    
+                else:
+                    embeddings = attribute_representation[:, idx,:]
 
-            
-            
-            if mode == "train":
-                loss.backward()
-                optimizer.step()
+                    
+                    if language_distillation:         
+                        selected_language_embeddings_idx = ocr_indexes[:, idx].type(torch.int32) 
+                        language_embeddings = x_ocr[selected_language_embeddings_idx,:]
+                        labels = torch.cat((labels, labels), dim=0)
+                        embeddings = torch.cat((embeddings, language_embeddings), dim=0)
+
+                loss_attribute = criterion(embeddings, labels)
+                loss += (loss_attribute) # + contrastive_loss_attribute) #distilattion_loss
+                
+                batch_entites_loss[attribute+"_train_loss"] += loss_attribute
+
+            loss.backward()
+            optimizer.step()
             
             
         
         epoch_train_loss += loss
         epoch_entities_losses.update(batch_entites_loss)
-        epoch_entities_losses[mode+"_loss"] = epoch_train_loss
+        epoch_entities_losses["train_loss"] = epoch_train_loss
 
         print(f"Epoch {epoch}: Loss: {epoch_train_loss}")
 
         wandb.log(epoch_entities_losses)
-
-        return epoch_train_loss
-    
-    
-    
-@torch.no_grad
-def evaluate_attribute_metric_space(collator:Type[FamilyCollator],
-                                    graph_structure:Type[HeteroData], 
-                                    model: Type[nn.Module],
-                                    image_reshape: Tuple[int, int], 
-                                    entities: Tuple[str, ...]):
-
-    height, width = image_reshape
-    model.eval()
-    final_dict = {"train": {}, "test": {}}
-    test_dict = {}
-    population_dict = {"train": [], "test": []}
-    for mode in ["train", "test"]:
-        collator._change_mode(mode=mode)
-        for idx, (edge_index_dict, _, population) in tqdm.tqdm(enumerate(collator), ascii=True):
-            
-            
-            x_dict = graph_structure.x_dict    
-            images_to_keep = []
-
-            for individual_index in population:
-                population_dict[mode].append(individual_index.item())
-                image = graph_structure["image_lines"][individual_index]._path
-                image = cv.imread(image)
-                #plt.imsave("./plots/original.jpg", image[:,:,::-1])
-                
-                image = transforms.to_tensor(image)
-                _, h, w = image.shape
-
-                if w < width:
-                    image = transforms.resize(img=image, size=(height, width))
-                    
-                else:
-                    image = image[:, :, :width]
-                    image = transforms.resize(img=image, size=(height, width))
-                    
-                
-                image = image[:, :, :width//2]
-                plotting_image = torch.permute(image, (1,2,0))
-                #plt.imsave("./plots/test.jpg", plotting_image.numpy()[:,:,::-1])
-
-                images_to_keep.append(image)
-    
         
-        ## Send information to the GPU
-            batch = torch.from_numpy(np.array(images_to_keep)).to(device=device)
-            population = population.to(device=device)
-            x_dict = {key: value.to(device) for key, value in x_dict.items()}
-            edge_index_dict = {key: value.to(device) for key, value in edge_index_dict.items()}
-            
-            individual_features = model.encode_visual_information(x=batch)
-            x_dict["individuals"][population] = individual_features  # update the information of the individuals 
-            
-            if model._apply_edges is not False:
-                edge_features = model.encode_edge_positional_information(x=batch)    
-            else:
-                edge_features = None
-            
-            x_dict = model.encode_attribute_information(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attributes=edge_features, population=population) #message_passing
         
-            final_dict[mode].update(x_dict)
-                
-                
-                
-    print(final_dict["test"].keys())
-    exit()
-            
+        return loss
+    
     

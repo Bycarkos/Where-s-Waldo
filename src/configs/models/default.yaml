@@ -1,6 +1,8 @@
 kernel_ratio : 0.7
-common_embedding_size: 64
+common_embedding_size: 128
 apply_edge_encoder: True
+apply_family_message: False
+add_record_linkage: False
 
 line_encoder:
   kernel_height: ???

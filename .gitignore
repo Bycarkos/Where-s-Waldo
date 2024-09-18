@@ -26,6 +26,34 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+##folders
+data/*
+.vscode
+checkpoints
+metrics
+outputs
+pickles
+plots
+wandb
+KNN
+evaluation
+embeddings
+
+## images
+*.png
+*.jpg
+
+## pickles
+*.pkl
+
+#checkpoints
+*.pt
+
+## binaris
+*.bin
+*.gz
+*.ca
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

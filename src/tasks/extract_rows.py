@@ -2,9 +2,8 @@ import cv2 as cv
 import numpy as np
 
 from surya.detection import batch_text_detection
-from surya.model.detection.segformer import load_model, load_processor
 from surya.layout import batch_layout_detection
-from surya.model.detection.segformer import load_model, load_processor
+from surya.model.detection.model import load_model, load_processor
 from surya.settings import settings
 
 from PIL import Image
@@ -246,8 +245,6 @@ def extract_rows(bboxes:List[List[np.ndarray]], max_image_width:int, confidence_
 
 
 
-
-
 def main(list_years:List, basepath:str):
 
     possible_error_documents = []
@@ -261,20 +258,18 @@ def main(list_years:List, basepath:str):
         print("Total of pages: ", len(glob.glob(abs_path + "/*.jpg")))
 
 
-        with open(abs_path + "/graph_gt.json", "r") as file:
+        with open(abs_path + "/graph_gt_corroborator.json", "r") as file:
             gt = json.load(file)
 
         for document, info in gt.items():
-            custom_information = {
-
-            }
+            custom_information = {}
             num_integrants = info["individus"]
             name_document = os.path.splitext(document)[0]
             
             auxiliar_path = os.path.join(abs_path, name_document) 
 
-            if os.path.exists(auxiliar_path):
-                continue
+            #if os.path.exists(auxiliar_path):
+            #    continue
             
             os.makedirs(auxiliar_path, exist_ok=True)
 
@@ -297,7 +292,10 @@ def main(list_years:List, basepath:str):
 
             else:
                 cropped_image = np.array(image)
-
+                x = 0
+                y=0
+                
+            custom_information["page_bbox"] = [x, y, w, h]
 
             
             cropped_image = Image.fromarray(cropped_image)
@@ -358,8 +356,52 @@ def main(list_years:List, basepath:str):
 
 
 if __name__ == "__main__":
-
-    main(list_years=[1930], basepath="data/CED/SFLL")
+    main(list_years=[1889], basepath="data/CED/SFLL")
     exit()
+
+    basepath = "data/CED/SFLL"
+    #1889, 1906, 1910,
+    for idx, year in enumerate([1915, 1924, 1930]):
+        year = str(year)
+        abs_path = os.path.join(basepath,year)
+        with open(abs_path + "/graph_gt_corroborator.json", "r") as file:
+            gt = json.load(file)
+            
+        for document, info in gt.items():
+            name_document = os.path.splitext(document)[0]
+            auxiliar_path = os.path.join(abs_path, name_document) 
+            with open(os.path.join(auxiliar_path, "info.json"), "r") as file:
+                    custom_information = json.load(file)
+                    
+            if custom_information.get("page_bbox", None) is not None:
+                continue
+
+            IMAGE_PATH = os.path.join(abs_path, document)
+
+            image = Image.open(IMAGE_PATH).convert("RGB")
+
+            h, w, _ = np.array(image).shape
+            if h+w < 5000:
+                table_coordinates = extract_table_coordinates(images=[image])
+                x, y, w, h = table_coordinates[-1]
+
+                x = int(x)
+                y = int(y)
+                w = int(w)
+                h = int(h)
+                cropped_image = np.array(image)[y:y+h, x:x+w]
+
+            else:
+                cropped_image = np.array(image)
+                x = 0
+                y=0
+            
+            custom_information["page_bbox"] = [x, y, w, h]
+            
+            with open(os.path.join(auxiliar_path, "info.json"), "w") as file:
+                json.dump(custom_information, file, default=int)
+                
+      
+    #
 
 

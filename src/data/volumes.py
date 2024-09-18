@@ -8,6 +8,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import os
 import re
+import cv2 as cv
 
 from PIL import Image
 import pandas as pd 
@@ -38,8 +39,9 @@ class Line:
     
 
     def image(self):
-        return Image.open(self._path).convert("RGB")
-    
+        img = cv.imread(self._path)
+        img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+        return img    
 
 @dataclass
 class Page:
@@ -57,7 +59,9 @@ class Page:
     
 
     def image(self):
-        return Image.open(self._path).convert("RGB")
+        img = cv.imread(self._path)
+        img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+        return img
     
     def gt(self) -> pd.DataFrame:
         base_folder = self._path.with_suffix("")
@@ -67,8 +71,8 @@ class Page:
 class Volume:
     _path: Path
     _pages: List[Type[Page]]
+    _year: str
     _entities: Tuple[str] = field(default_factory=lambda: ("nom", "cognom_1", "cognom_2", "parentesc", "ocupacio"))
-
 
 
     def count_attributes(self):

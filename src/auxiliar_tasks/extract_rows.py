@@ -2,9 +2,8 @@ import cv2 as cv
 import numpy as np
 
 from surya.detection import batch_text_detection
-from surya.model.detection.segformer import load_model, load_processor
+from surya.model.detection.model import load_model, load_processor
 from surya.layout import batch_layout_detection
-from surya.model.detection.segformer import load_model, load_processor
 from surya.settings import settings
 
 from PIL import Image
@@ -359,7 +358,7 @@ def main(list_years:List, basepath:str):
 
 if __name__ == "__main__":
 
-    main(list_years=[1930], basepath="data/CED/SFLL")
+    main(list_years=[1924], basepath="data/CED/SFLL")
     exit()
 
 

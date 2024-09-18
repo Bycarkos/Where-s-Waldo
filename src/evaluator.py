@@ -1,7 +1,13 @@
 ## Dataset Things
+
 from data.volumes import Volume, Page, Line
-from data.dataset import Graphset
-from data.collator import FamilyCollator
+from data.graphset import Graphset
+from data.graph_sampler import GraphSampler, AttributeSampler
+from data.image_dataset import ImageDataset
+
+
+import torch_geometric.utils as tutils
+
 
 import data.volumes as dv
 
@@ -9,31 +15,34 @@ import data.volumes as dv
 from models import gnn_encoders as gnn
 from models import visual_encoders as cnn
 from models.graph_construction_model import MMGCM
+from models import edge_visual_encoders as EVE
+
 
 
 ### Utils
 import utils 
+import visualizations as visu
 
 
 ## Pipelines
 import pipelines as pipes
 
+## tasks
+from tasks import record_linkage as rl
 
 ## Common packages
 import torch.nn as nn
 import torchvision.transforms.functional as transforms
 import torch
-from vit_pytorch.na_vit import NaViT
 
 from torch.optim import Adam
-from torch_geometric.nn import to_hetero
 
 import numpy as np
 
 ## Typing Packages
 from typing import *
-from torchtyping import  TensorType
-from torch_geometric.data import HeteroData
+from torch.utils.data import DataLoader
+
 
 
 ## Configuration Package
@@ -42,7 +51,6 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
 ## Experiment Tracking packages
-import wandb
 import tqdm
 
 ## Common packages
@@ -54,9 +62,7 @@ from pathlib import Path
 from PIL import Image
 import matplotlib.pyplot as plt
 import copy
-import pickle
-import networkx as nx
-from networkx.algorithms import bipartite
+
 
 
 import umap
@@ -67,94 +73,183 @@ import pprint
 from beeprint import pp as bprint
 
 
+from sklearn.model_selection import StratifiedKFold
 
-@hydra.main(config_path="./configs", config_name="main", version_base="1.3.2")
+import pdb
+
+@hydra.main(config_path="./configs", config_name="eval", version_base="1.3.2")
 def main(cfg: DictConfig):
     
-    cfg_model = cfg.models
-    cfg_data = cfg.data
-    cfg_setup = cfg.setup
+    CFG_MODELS = cfg.models
+    CFG_DATA = cfg.data
+    CFG_SETUP    = cfg.setup
 
 
-    volumes = pipes.load_volumes(cfg=cfg_data.dataset)
+    evaluate_path = "evaluation/"
+
+    
     
     #! The utility of this dictionary is to relate the groundtruth with the visual information AD-HOC
     pk = {"Noms_harmo":"nom", "cognom1_harmo":"cognom_1", "cognom2_harmo":"cognom_2", "parentesc_har":"parentesc", "ocupacio":"ocupacio"}
     
     #  ^ Hydra things
-    batch_size = cfg_data.collator.batch_size
-    shuffle = cfg_data.collator.shuffle
-    embedding_size = cfg_setup.config.embedding_size
-    patch_size = cfg_setup.config.patch_size
-    epochs = cfg_setup.config.epochs
-    entities = cfg_data.dataset.entities
+ 
+    batch_size = CFG_DATA.collator.batch_size
+    shuffle = CFG_DATA.collator.shuffle
+    number_volum_years = len(CFG_DATA.dataset.volumes) 
+    checkpoint_name = CFG_MODELS.name_checkpoint
+    embedding_size = CFG_MODELS.common_configuration.embedding_size
+
     # ^ 
     
-    if os.path.exists("./pickles/graphset.pkl"):
-        with open("./pickles/graphset.pkl", "rb") as file:
-            Graph = pickle.load(file)
+    ## & Extract the dataset and the information in this case 
+    volumes = pipes.load_volumes(cfg=CFG_DATA) 
+    image_dataset = ImageDataset(Volumes=volumes, cfg=CFG_DATA.dataset)
+    df_transcriptions = image_dataset._total_gt
+    n_different_individuals = image_dataset._total_individual_nodes
+    graphset = Graphset(total_nodes=n_different_individuals,
+                        df_transcriptions=df_transcriptions,
+                        n_volumes=len(volumes),
+                        graph_configuration=CFG_DATA.graph_configuration,
+                        auxiliar_entities_pk = pk)
 
-    else:
-        Graph = Graphset(Volumes=volumes, auxiliar_entities_pk=pk, add_edge_features=True)
-        Graph._initialize_image_information()
-        Graph._initialize_edges()
-            
-    Graph._initialize_nodes(embedding_size = embedding_size)
+    sampler = AttributeSampler(graph=graphset._graph, batch_size=batch_size, shuffle=shuffle)
 
-    ##? 
 
-    #? Define the Collator
-    ## ! Change the way to initialize the collator (we need to change the mode because we are creating 3 instances)
-    collator = FamilyCollator(graph=Graph, batch_size=batch_size, shuffle=shuffle, mode="train")
-    collator_test = copy.copy(collator)
-    collator_test._change_mode("test")
-    
-    core_graph = Graph._graph
-    #? 
-    
-    ## ** model things
-    ratio_kernel = cfg_model.kernel_ratio
+    print("Generating DataLoader")
 
-    min_width = core_graph["mean_width"]
-    max_heigh = core_graph["min_height"] + core_graph["mean_height"]
-    
-    width, height = utils.extract_optimal_shape(min_width=min_width, max_height=max_heigh, patch_size=patch_size) 
-    width = int(width.item())
-    height = int(height.item())
-    
-    kernel_height = int((height*ratio_kernel))
-    kernel_width = 5
+    total_loader = DataLoader(dataset=image_dataset, 
+                            batch_size = batch_size,
+                            collate_fn=image_dataset.collate_fn,
+                            num_workers=0,
+                            shuffle=True,
+                            pin_memory=True)
 
-    ## ** 
-    
-    ## ^ Model 
-    cfg_model.line_encoder.kernel_height = kernel_height
-    cfg_model.line_encoder.kernel_width = kernel_width
-    cfg_model.gnn_encoder.attributes = cfg_data.dataset.entities
-    cfg_model.edge_encoder.number_of_entities = len(entities)
+    print("DATA LOADED SUCCESFULLY")
+    H = image_dataset.general_height 
+    W = image_dataset.general_width // 16
 
-    if cfg_model.apply_edge_encoder is False:
-        model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.FamilyAttributeGnn, cfg=cfg_model)
-    
-    else:
-        model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.FamilyAttributeGnn, edge_encoder=cnn.EdgeAttFeatureExtractor, cfg=cfg_model)
+    CFG_MODELS.edge_visual_encoder.input_atention_mechanism = H*W
 
-    
-    dataset_name = cfg_data.dataset.name
-    model_name = f"./checkpoints/{dataset_name}_{cfg.name_checkpoint}.pt"
+    model = MMGCM(visual_encoder=cnn.LineFeatureExtractor, gnn_encoder=gnn.AttributeGNN, edge_encoder=EVE.EdgeAttFeatureExtractor, cfg=CFG_MODELS).to(device)
+    model_name = f"./checkpoints/{checkpoint_name}.pt"
+    name_embeddings = f"{checkpoint_name}"
 
     model.load_state_dict(torch.load(model_name))
     model.to(device)
-    
     print("MODEL LOADED SUCCESFULLY")
+
+    
+    core_graph = graphset._graph
+    
+    if CFG_MODELS.add_language is True:
+        
+        filepath  = f"embeddings/language_embeddings_{number_volum_years}_{embedding_size}_entities_{len(CFG_SETUP.configuration.compute_loss_on)}.pkl"
+        
+        if os.path.exists(filepath):
+            language_embeddings = utils.read_pickle(filepath)
+                
+        else:
+            language_embeddings = utils.extract_language_embeddings(list(image_dataset._map_ocr.keys()), embedding_size=embedding_size, filepath=filepath)
+    
+        print("LANGUAGE EMBEDDINGS EXTRACTED SUCCESFULLY")
+    
+        core_graph.x_language = language_embeddings
+
+        print(image_dataset._map_ocr)
+        
+    core_graph.epoch_populations = image_dataset._population_per_volume
+
+    
+
+    if os.path.exists(f"embeddings/{name_embeddings}.pkl"):
+        attribute_embeddings = utils.read_pickle(filepath=f"embeddings/{name_embeddings}.pkl")
+        attribute_embeddings = attribute_embeddings.cpu()
+    else:            
+        attribute_embeddings, individual_embeddings = utils.extract_embeddings_from_graph(loader=total_loader,
+                                              graph=core_graph,
+                                              model=model)
+        
+
+        attribute_embeddings = attribute_embeddings.cpu()
+        individual_embeddings = individual_embeddings.cpu()
+                        
+        utils.write_pickle(info=attribute_embeddings, 
+                           filepath=f"embeddings/{name_embeddings}.pkl")
+        
+#    print(model._edge_encoder.attention_values)
+    exit()
+    path_save_plots = os.path.join(evaluate_path, checkpoint_name)
+    
+    visu.plot_attribute_metric_space(attribute_embedding_space=attribute_embeddings.cpu(),
+                                     fig_name=os.path.join(path_save_plots, "Attributes_Distribution.jpg"))
     
     
-    pipes.evaluate_attribute_metric_space(collator=collator,
-                                          graph_structure=core_graph,
-                                          model=model,
-                                          image_reshape=(height, width),
-                                          entities=entities)
+    pos_embedding = model._edge_encoder.pos_emb[:1000].detach().cpu().numpy().reshape(1, -1)
     
+    #visu.plot_positional_encoding(positional_encoding=pos_embedding, fig_name=os.path.join(path_save_plots, "Positional_embedding.jpg"))
+    #exit()
+        
+    ## ** TEST EXTRACTION
+    
+    candidate_pairs = core_graph[("individual", "same_as", "individual")].negative_sampling
+    true_pairs = core_graph[("individual", "same_as", "individual")].edge_index
+    
+    # extract the population from the last time
+    final_time_gap_population = list(core_graph.epoch_populations[-2]) + list(core_graph.epoch_populations[-1]) 
+    final_time_gap_population = torch.tensor(final_time_gap_population).type(torch.int64)
+    
+    ## Extract candidate pairs 
+    #specific_subgraph_candidate, _ = tutils.subgraph(subset=final_time_gap_population, edge_index=candidate_pairs[:2,:].type(torch.int64))
+    ## Extract true pairs for the last epochs
+    mask = torch.isin(true_pairs[:2, :], final_time_gap_population).all(dim=0)
+    mask_candidate = torch.isin(candidate_pairs[:2,:], final_time_gap_population).all(dim=0)
+    ## /& This one is used to get the final numbers ( This is train true pairs)
+    specific_true_pairs_subgraph = true_pairs[:, mask]
+    specific_subgraph_candidate = candidate_pairs[:, mask_candidate]
+    
+    ### Fins aquí tot bé
+    
+    ## & TEST SAME AS
+    X_test_indexes = torch.cat((specific_true_pairs_subgraph, specific_subgraph_candidate), dim=1).type(torch.int32).numpy()
+    X_test = (attribute_embeddings[X_test_indexes[0], :] - attribute_embeddings[X_test_indexes[1],:]).pow(2).sum(-1).sqrt()
+    y_test = X_test_indexes[-1]
+    
+    
+    ## ^ TRAIN EXTRACTION 
+    earlies_time_populations = []
+    for pop in core_graph.epoch_populations[:-1]:
+        earlies_time_populations += list(pop)
+        
+        
+    earlies_time_populations = torch.tensor(earlies_time_populations).type(torch.int64)
+
+    mask = torch.isin(true_pairs[:2, :], earlies_time_populations).all(dim=0)
+    mask_candidate_train = torch.isin(candidate_pairs[:2,:], earlies_time_populations).all(dim=0)
+    
+    specific_true_pairs_subgraph_train = true_pairs[:, mask]
+    specific_subgraph_candidate_train = candidate_pairs[:, mask_candidate_train]
+
+    X_train_indexes = torch.cat((specific_true_pairs_subgraph_train, specific_subgraph_candidate_train), dim=1).numpy()
+    X_train = (attribute_embeddings[X_train_indexes[0], :] - attribute_embeddings[X_train_indexes[1],:]).pow(2).sum(-1).sqrt()
+
+    y_train = X_train_indexes[-1] #torch.cat((torch.ones((specific_true_pairs_subgraph_train.shape[1])), torch.zeros((specific_subgraph_candidate_train.shape[1]))), dim=0).numpy()
+
+    metrics_rl = rl.record_linkage_with_logistic_regression(X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test, candidate_sa=X_test_indexes,
+                                                                                                            random_state=0, penalty="l2", solver="newton-cholesky", class_weight="balanced", n_jobs=-1)
+    
+
+    os.makedirs(os.path.join("KNN/", checkpoint_name), exist_ok=True)
+
+    dict_nn = utils.extract_intra_cluster_nearest_neighboors_at_k(attribute_embeddings, top_k=500)
+
+
+    nn, distances = dict_nn
+    pdb.set_trace()
+
+    utils.write_pickle(dict_nn, filepath=os.path.join("KNN/", checkpoint_name, "NN.pkl"))
+    
+        
     
         
 if __name__ == "__main__":
