@@ -37,49 +37,14 @@ models:
   add_language: False
   name_checkpoint: "MMGC_Experiment_1_New_Edge_PE_Attention_language"
 
-  common_configuration:
-    embedding_size: 128
 
-  
-  
-  language_encoder:
-    embedding_size: 128
-    model_type: fasttext
-    
-
-  
   visual_encoder:
     input_channels: 3
-    hidden_channels: 16
-    output_channels: ${models.common_configuration.embedding_size}
-    number_of_hidden_convolutions: 1
-    kernel_height: [5, 5, 5]
-    kernel_width: [3, 3, 3]
-
-  edge_visual_encoder:
-
-    patch_size: ${setup.configuration.patch_size}
-    kernel_height: [5, 5]
-    kernel_width: [3, 3]
-    input_channels: 3
-    hidden_channels: 16
-    output_channels: ${models.common_configuration.embedding_size}
-    number_of_different_edges: ${data.graph_configuration.attribute_edges}
-    positional_max_length: 10000
-    input_atention_mechanism: ???
-    add_attention: True
-
-  gnn_encoder:
-
-    add_backward: True
-
-    forward_attribute_gnn_encoder:
-      embedding_size: ${models.common_configuration.embedding_size}
-      node_types: ${data.graph_configuration.attribute_type_of_nodes}
-
-    backward_attribute_gnn_encoder:
-      embedding_size: ${models.common_configuration.embedding_size}
-      node_types: ${data.graph_configuration.attribute_type_of_nodes}
+    hidden_channels: 32
+    output_channels: 300
+    number_of_hidden_convolutions: 3
+    kernel_height: [5, 5, 5, 5, 5]
+    kernel_width: [3, 3, 3, 3, 3]
 
 
 setup:

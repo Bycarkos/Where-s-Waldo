@@ -50,7 +50,119 @@ class LineFeatureExtractor(nn.Module):
         x = self._pool(x).view(x.shape[0], -1)
 
         return x
+    
 
+
+
+class LineAutoEncoder(nn.Module):
+
+
+    def __init__(self, cfg:DictConfig):
+
+
+        super(LineAutoEncoder, self).__init__()
+
+        self._height = cfg.kernel_height
+        self._width = cfg.kernel_width
+        
+        self._kernels = list(zip(self._height, self._width))
+
+        self._input_channels = cfg.input_channels
+        self._hidden_channels = cfg.hidden_channels
+        self._output_channels = cfg.output_channels
+
+        self._num_middle_conv = cfg.number_of_hidden_convolutions
+
+        self._norm = nn.BatchNorm2d(self._hidden_channels * (self._num_middle_conv+1))
+        self._max_pooling = nn.MaxPool2d(2, stride=2, padding=1, return_indices=True)
+        self._global_pooling = nn.AdaptiveAvgPool2d(1)
+
+        self._list_convolutions = []
+        self._list_deconvolutions = []
+        self._list_pooling = []
+
+        
+
+        self._initialize_encoder()
+        self._initialize_decoder()
+
+        print(self._list_convolutions)
+
+        print(self._list_deconvolutions)
+
+    def _initialize_encoder(self):
+        
+        ## initialize encoder
+        self._init_convolution = nn.Conv2d(in_channels=3, out_channels=self._hidden_channels, kernel_size=(3,3), device=device)
+        if self._num_middle_conv == 1:
+            self._list_convolutions.append(nn.Conv2d(in_channels=(self._hidden_channels), out_channels=(self._hidden_channels), kernel_size=(3,3), device=device))
+
+        else:
+            for i in range(1, self._num_middle_conv + 1):
+                self._list_convolutions.append(nn.Conv2d(in_channels=(self._hidden_channels * i), out_channels=(self._hidden_channels * (i+1)), kernel_size=(3,3), device=device))
+
+        self._output_convolution = nn.Conv2d(in_channels=self._hidden_channels * (self._num_middle_conv+1), out_channels=self._output_channels, kernel_size=(3,3), device=device)
+
+
+    def _initialize_decoder(self):
+        self._max_unpooling = nn.MaxUnpool2d(2, stride=2, padding=1)
+
+        self._output_deconvolution = nn.ConvTranspose2d(in_channels=self._output_channels, out_channels=self._hidden_channels * (self._num_middle_conv+1), kernel_size=(3,3), device=device)
+
+        if self._num_middle_conv == 1:
+            self._list_deconvolutions.append(nn.ConvTranspose2d(in_channels=(self._hidden_channels), out_channels=(self._hidden_channels), kernel_size=(3,3), device=device))
+        else:
+            for i in range(self._num_middle_conv + 1, 1, -1):
+                self._list_deconvolutions.append(nn.ConvTranspose2d(in_channels=(self._hidden_channels * i), out_channels=(self._hidden_channels * (i-1)), kernel_size=(3,3), device=device))
+
+        self._init_deconvolution = nn.ConvTranspose2d(in_channels=self._hidden_channels, out_channels=3, kernel_size=(3,3), device=device)
+
+
+    def encoder(self, x):
+
+        x = self._init_convolution(x)
+        x = torch.relu(x)
+
+        ## getting the exepcted shape because of rounding     
+        # As explained in the docs for MaxUnpool: when doing MaxPooling, there might be some pixels that get rounded up due to integer division on the input size.
+        # For example, if your image has size 5, and your stride is 2, the output size can be either 2 or 3, and you can’t retrieve the original size of the image. 
+        # That’s why there is an optional argument to MaxUnpool that allows you to specify the desired output size. In your case, it should be something like  
+
+        self._pooling_shape = x.shape
+        x, self._indices = self._max_pooling(x)
+        
+        for conv in self._list_convolutions:
+            x = conv(x)
+            x = torch.relu(x)
+
+        x = self._norm(x)
+        x = self._output_convolution(x)
+        self._encode_recover_shape = x.shape[2:]
+        
+        x = self._global_pooling(x)
+
+        return  x.view(x.shape[0], -1), x
+    
+    def decoder(self, x):
+        
+        ## This computation because there when doing adaptive avg pooling the pixels in the upsampling have the value of the mean.
+        x = x + torch.zeros((x.shape[0], x.shape[1], *self._encode_recover_shape), device=device)
+        x = self._output_deconvolution(x)
+        x = torch.relu(x)
+
+        for convt in self._list_deconvolutions:
+            x = convt(x)
+            x = torch.relu(x)
+
+        #print(f"Shape before unpooling: {x.shape}")
+        x = self._max_unpooling(x, self._indices, output_size=self._pooling_shape)  # Use output_size to ensure consistency
+        #print(f"Shape after unpooling: {x.shape}")
+
+        x = self._init_deconvolution(x)
+
+        return x
+    
+    
 
     
     
