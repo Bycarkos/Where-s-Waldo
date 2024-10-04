@@ -37,8 +37,13 @@ class Line:
     def __len__(self):
         return len(self._ocr)
     
+    def shape(self):
+        shape = Image.open(self._path).size
+
+        return shape
 
     def image(self):
+        self._path = str(self._path)
         img = cv.imread(self._path)
         img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
         return img    
@@ -57,9 +62,14 @@ class Page:
     def __len__(self):
         return len(self._individuals)
     
+    def shape(self):
+        shape = Image.open(self._path).size
+
+        return shape
 
     def image(self):
-        img = cv.imread(self._path)
+        self._path = (str(self._path))
+        img = cv.imread(str(self._path))
         img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
         return img
     

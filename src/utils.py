@@ -28,6 +28,30 @@ import fasttext.util
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+
+
+
+def update_and_save_model(previous_metric, actual_metric, model, checkpoint_path:str, compare:str="<"):
+
+    if compare == "<":
+        
+        if actual_metric < previous_metric:
+            previous_metric = actual_metric
+            torch.save(model.state_dict(), checkpoint_path)
+
+            return True, previous_metric
+    
+    elif compare == ">":
+                
+        if actual_metric > previous_metric:
+            previous_metric = actual_metric
+            torch.save(model.state_dict(), checkpoint_path)
+
+            return True, previous_metric
+        
+    return False, previous_metric
+
+
 def write_pickle(info: Any, filepath: str) -> None:
     os.makedirs(os.path.split(filepath)[0], exist_ok=True)
     

@@ -73,7 +73,11 @@ class LineAutoEncoder(nn.Module):
 
         self._num_middle_conv = cfg.number_of_hidden_convolutions
 
-        self._norm = nn.BatchNorm2d(self._hidden_channels * (self._num_middle_conv+1))
+        if self._num_middle_conv == 1:
+            self._norm = nn.BatchNorm2d(self._hidden_channels)
+        else:
+            self._norm = nn.BatchNorm2d(self._hidden_channels * (self._num_middle_conv+1))
+        
         self._max_pooling = nn.MaxPool2d(2, stride=2, padding=1, return_indices=True)
         self._global_pooling = nn.AdaptiveAvgPool2d(1)
 
@@ -86,9 +90,9 @@ class LineAutoEncoder(nn.Module):
         self._initialize_encoder()
         self._initialize_decoder()
 
-        print(self._list_convolutions)
+        #print(self._list_convolutions)
 
-        print(self._list_deconvolutions)
+        #print(self._list_deconvolutions)
 
     def _initialize_encoder(self):
         
@@ -101,13 +105,19 @@ class LineAutoEncoder(nn.Module):
             for i in range(1, self._num_middle_conv + 1):
                 self._list_convolutions.append(nn.Conv2d(in_channels=(self._hidden_channels * i), out_channels=(self._hidden_channels * (i+1)), kernel_size=(3,3), device=device))
 
-        self._output_convolution = nn.Conv2d(in_channels=self._hidden_channels * (self._num_middle_conv+1), out_channels=self._output_channels, kernel_size=(3,3), device=device)
+        if self._num_middle_conv == 1:
+            self._output_convolution = nn.Conv2d(in_channels=self._hidden_channels , out_channels=self._output_channels, kernel_size=(3,3), device=device)
+        else:
+            self._output_convolution = nn.Conv2d(in_channels=self._hidden_channels * (self._num_middle_conv+1), out_channels=self._output_channels, kernel_size=(3,3), device=device)
 
 
     def _initialize_decoder(self):
         self._max_unpooling = nn.MaxUnpool2d(2, stride=2, padding=1)
 
-        self._output_deconvolution = nn.ConvTranspose2d(in_channels=self._output_channels, out_channels=self._hidden_channels * (self._num_middle_conv+1), kernel_size=(3,3), device=device)
+        if self._num_middle_conv == 1:
+            self._output_deconvolution = nn.ConvTranspose2d(in_channels=self._output_channels, out_channels=self._hidden_channels, kernel_size=(3,3), device=device)
+        else:
+            self._output_deconvolution = nn.ConvTranspose2d(in_channels=self._output_channels, out_channels=self._hidden_channels * (self._num_middle_conv+1), kernel_size=(3,3), device=device)
 
         if self._num_middle_conv == 1:
             self._list_deconvolutions.append(nn.ConvTranspose2d(in_channels=(self._hidden_channels), out_channels=(self._hidden_channels), kernel_size=(3,3), device=device))
@@ -162,7 +172,14 @@ class LineAutoEncoder(nn.Module):
 
         return x
     
+
+    def forward(self, x):
+
+        embedding, x = self.encoder(x=x)
+
+        reconstructed_image = self.decoder(x=x)
     
+        return reconstructed_image
 
     
     

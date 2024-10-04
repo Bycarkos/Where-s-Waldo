@@ -3,7 +3,7 @@
 from data.volumes import Volume, Page, Line
 from data.graphset import Graphset
 from data.graph_sampler import GraphSampler, AttributeSampler
-from data.image_dataset import ImageDataset
+from src.data.ced_dataset import ImageDataset
 
 
 import torch_geometric.utils as tutils

@@ -8,7 +8,7 @@ data:
   export_data: True
 
   dataset:
-    path: ${hydra:runtime.cwd}/data/CED/SFLL
+    path: /home/cboned/data/HTR/CED/SFLL
     volumes: [1889, 1906]
     patch_size: 16
     cut_image: True

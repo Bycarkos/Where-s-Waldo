@@ -164,11 +164,16 @@ def load_volumes(cfg: DictConfig):
             with open(page_folder + "/info.json", "rb") as file:
                 load_file = json.load(file) 
                 if load_file.get("rows_bbox", None) is None:
-                    bboxes = []
+                    bboxes = None
                 else:
                     bboxes = load_file["rows_bbox"]
+
+
+                if load_file.get("page_bbox", None) is None:
+                    page_bboxes = None
+                else:
+                    page_bboxes = load_file["page_bbox"]
                     
-                page_bbox = load_file["page_bbox"]
             
             
             #? condition to remove pages with inconsitencis
@@ -193,7 +198,7 @@ def load_volumes(cfg: DictConfig):
                     bbox_line[-1] = percentil_85
                     page_lines.append(Line(Path(path_line), bbox_line, bbox_line, ocr))
             
-            pages.append(Page(Path(page_folder+".jpg"), page_bbox, page_lines, n_families))
+            pages.append(Page(Path(page_folder+".jpg"), page_bboxes, page_lines, n_families))
             
         volums.append(Volume(auxiliar_volume, pages, auxiliar_volume, entities))
 

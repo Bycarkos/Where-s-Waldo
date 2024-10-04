@@ -2,7 +2,7 @@
 from data.volumes import Volume, Page, Line
 from data.graphset import Graphset
 from data.graph_sampler import GraphSampler, AttributeSampler
-from data.image_dataset import ImageDataset
+from data.ced_dataset import CEDDataset
 
 import data.volumes as dv
 
@@ -15,6 +15,7 @@ from models.graph_construction_model import MMGCM
 
 ### Utils
 import utils 
+import visualizations as visu
 
 
 ## Pipelines
@@ -144,7 +145,8 @@ def main(cfg: DictConfig):
 
     ## & Extract the dataset and the information in this case 
     volumes = pipes.load_volumes(cfg=CFG_DATA) 
-    image_dataset = ImageDataset(Volumes=volumes, cfg=CFG_DATA.dataset)
+    image_dataset = CEDDataset(Volumes=volumes, cfg=CFG_DATA.dataset)
+
     df_transcriptions = image_dataset._total_gt
     n_different_individuals = image_dataset._total_individual_nodes
     graphset = Graphset(total_nodes=n_different_individuals,
@@ -191,9 +193,6 @@ def main(cfg: DictConfig):
     print("DATA LOADED SUCCESFULLY")
     ## ^ Model 
 
-    print()
-    print()
-
     H = image_dataset.general_height 
     W = image_dataset.general_width // 16
 
@@ -208,7 +207,6 @@ def main(cfg: DictConfig):
         print("Model Loaded Succesfully Starting Finetunning")
     
     optimizer = hydra.utils.instantiate(CFG_SETUP.optimizer, params=model.parameters())
-    criterion = nn.TripletMarginLoss(margin=1, reduction="mean" )
 
     if cfg.verbose == True:
         print("Configuration of the Models: ")
