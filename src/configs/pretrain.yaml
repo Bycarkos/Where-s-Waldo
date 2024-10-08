@@ -25,7 +25,7 @@ models:
   finetune: False
   add_visual_encoder: True
   add_language: False
-  name_checkpoint: "Autoencoder Esposalles Max Pooling"
+  name_checkpoint: "Autoencoder Esposalles Max Pooling unnormalizing"
 
 
   visual_encoder:
@@ -45,7 +45,7 @@ setup:
     batch_size: ${data.collator.batch_size}
     epochs: 200
     embedding_size: ${models.visual_encoder.output_channels}
-    lr: 1e-4
+    lr: 1e-3
     visual_encoder_convolutions: ${models.visual_encoder.number_of_hidden_convolutions}
     visual_encoder_hidden_channels: ${models.visual_encoder.hidden_channels}
 
@@ -57,7 +57,7 @@ setup:
   wandb:
     project: "Graph Construction"
     config: ${setup.configuration}
-    name: "Pretraining on Esposalles With Max Pooling"
+    name: "Pretraining on Esposalles With Max Pooling unnormalizing"
     group: "Autoencoder Pretraining"
 
 

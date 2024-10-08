@@ -10,6 +10,8 @@ import data.volumes as dv
 
 ## Model Things
 from models import visual_encoders as VE
+import pytorch_warmup as warmup
+from transformers import get_cosine_schedule_with_warmup
 
 
 
@@ -67,12 +69,15 @@ Grey (//)
 Commented out Code can also be Styled to make it Clear the Code shouldn't be There.
 Any Other Comment Styles you'd like can be Specified in the Settings.
 """
+MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device)
+STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device)
 
         
 def batch_step(loader: Type[DataLoader],
                model: Type[nn.Module],
                criterion: Type[nn.Module],
                optimizer: Type[torch.optim.Adam],
+               scheduler,
                sobel_kernel: Optional[torch.Tensor]=None,
                epoch:int=0):
     
@@ -95,14 +100,19 @@ def batch_step(loader: Type[DataLoader],
 
         reconstructed_image = model(images)
 
+        original_images = torch.clip(original_images * STD + MEAN, min=0., max=1.)
+        #reconstructed_image = reconstructed_image * STD + MEAN
+
         MSE = criterion(original_images, reconstructed_image)
-        #loss = torch.mean(MSE * masks) 
-        loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10)
+        if epoch == 100: loss = (torch.mean(MSE * masks)*10)
+            
+        else:loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10)
 
         batch_loss += loss
 
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
     epoch_loss = batch_loss/len(loader)
 
@@ -131,9 +141,11 @@ def eval(loader: Type[DataLoader],
 
         reconstructed_image = model(images)
 
-        #visu.plot([original_images[0].cpu(), reconstructed_image[0].detach().cpu(), masks[0].cpu()])
-        #exit()
+        original_images = original_images * STD + MEAN
+        reconstructed_image = reconstructed_image * STD + MEAN
 
+        #visu.plot([original_images[0].detach().cpu(), reconstructed_image[0].detach().cpu()])
+        #exit()
         if idx ==0:
             original_images_grid = original_images
             reconstructred_images_grid = reconstructed_image
@@ -232,7 +244,7 @@ def main(cfg: DictConfig):
 
     # * Dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, pin_memory=True, num_workers=8, collate_fn=collate_fn)
-    validation_loader = DataLoader(validation_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=1, collate_fn=collate_fn)
+    validation_loader = DataLoader(validation_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=0, collate_fn=collate_fn)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=1, collate_fn=collate_fn)
     # *
 
@@ -246,8 +258,21 @@ def main(cfg: DictConfig):
         model.load_state_dict(torch.load(model_name))
         print("Model Loaded Succesfully Starting Finetunning")
 
+
     optimizer = hydra.utils.instantiate(CFG_SETUP.optimizer, params=model.parameters())
     criterion = nn.MSELoss(reduction="none")
+    
+    
+
+    num_warmup_steps = 500  
+    train_loader_len = len(train_loader)  # Assuming you have defined train_loader
+    total_steps = epochs * train_loader_len
+    
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=total_steps
+    )
 
     optimal_loss = 10000
 
@@ -282,10 +307,16 @@ def main(cfg: DictConfig):
             model=model,
             criterion=criterion,
             optimizer=optimizer,
-            epoch=epoch
+            epoch=epoch,
+            scheduler=scheduler
         ) ## to fulfill
 
-        print(f"Loss Epoch: {epoch} Value: {train_loss}")
+
+            #wandb.log({"Validation Loss": loss_validation})
+        scheduler.step()
+        current_lr = scheduler.get_last_lr()[0]  # Get current learning rate (from scheduler)
+        print(f"Loss Epoch: {epoch} Value: {train_loss} LR: {current_lr:.6f}")
+
         if ((epoch +1) % 10) == 0:
             loss_validation = eval(loader=validation_loader,
                                 model=model,
@@ -301,7 +332,8 @@ def main(cfg: DictConfig):
             if updated:
                 print(f"Model Updated: Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
             
-            #wandb.log({"Validation Loss": loss_validation})
+
+
 
                     
     model.load_state_dict(torch.load(checkpoint_name))

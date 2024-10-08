@@ -102,7 +102,6 @@ class ThresholdTransform(object):
   
 
 def binarize_background(img: TensorType["C", "H", "W"]):
-
     channel_ordering = img.view(3, -1)
     sorted_pixels, _ = torch.sort(channel_ordering, dim=1, descending=True)
     median_percentile = sorted_pixels[:, :int(sorted_pixels.shape[1] * 0.25)]
