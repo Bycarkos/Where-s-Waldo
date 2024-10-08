@@ -25,7 +25,7 @@ import pipelines as pipes
 import torch.nn as nn
 import torch
 from torch.utils.data import DataLoader
-
+import torchvision
 from torch.optim import Adam
 
 
@@ -72,57 +72,98 @@ Any Other Comment Styles you'd like can be Specified in the Settings.
 def batch_step(loader: Type[DataLoader],
                model: Type[nn.Module],
                criterion: Type[nn.Module],
-               optimizer: Type[torch.optim.Adam]):
+               optimizer: Type[torch.optim.Adam],
+               sobel_kernel: Optional[torch.Tensor]=None,
+               epoch:int=0):
     
     model.train()
 
+    if sobel_kernel is not None:
+        x_kernel, y_kernel = sobel_kernel
     batch_loss = 0
 
     for idx, batch in tqdm.tqdm(enumerate(loader), desc="Batch Loop", leave=True, position=1):
         optimizer.zero_grad()
         images = batch["image_lines"].to(device)
         original_images = batch["non_augmented_image_lines"].to(device)
-        visu.plot(original_images.cpu())
-        exit()
+        masks = batch["masks"].to(device)
+
+        #visu.plot(original_images.cpu())
+        #exit()
+
         ocr = batch["ocrs"]
 
         reconstructed_image = model(images)
 
-        loss = criterion(original_images, reconstructed_image)
+        MSE = criterion(original_images, reconstructed_image)
+        #loss = torch.mean(MSE * masks) 
+        loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10)
+
         batch_loss += loss
 
         loss.backward()
         optimizer.step()
 
     epoch_loss = batch_loss/len(loader)
-    print(epoch_loss)
-    exit()
-    wandb.log({"Training Loss": epoch_loss})
+
+    wandb.log({"Training Loss": epoch_loss}, step=epoch)
 
     return epoch_loss
 
 @torch.no_grad()
 def eval(loader: Type[DataLoader],
                model: Type[nn.Module],
-               criterion: Type[nn.Module]):
+               criterion: Type[nn.Module],
+               mode: str="Validation",
+               epoch:int = 0):
     model.eval()
 
     batch_loss = 0
 
+    original_images_grid = None
+    reconstructred_images_grid = None
+    masks_grid = None
     for idx, batch in tqdm.tqdm(enumerate(loader), desc="Validation/Test Batch Loop", leave=True, position=1):
         images = batch["image_lines"].to(device)
         original_images = batch["non_augmented_image_lines"].to(device)
         ocr = batch["ocrs"]
+        masks = batch["masks"].to(device)
 
         reconstructed_image = model(images)
 
-        loss = criterion(original_images, reconstructed_image)
+        #visu.plot([original_images[0].cpu(), reconstructed_image[0].detach().cpu(), masks[0].cpu()])
+        #exit()
+
+        if idx ==0:
+            original_images_grid = original_images
+            reconstructred_images_grid = reconstructed_image
+            masks_grid = masks
+
+        else:
+            original_images_grid = torch.vstack((original_images_grid, original_images))
+            reconstructred_images_grid = torch.vstack((reconstructred_images_grid, reconstructed_image))
+            masks_grid = torch.vstack((masks_grid, masks))
+
+
+        MSE = criterion(original_images, reconstructed_image)
+
+        loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10)
+        
         batch_loss += loss
 
 
+    original_images = wandb.Image(torchvision.utils.make_grid(original_images_grid, nrow=16), caption="Original")
+    reconstructed = wandb.Image(torchvision.utils.make_grid(reconstructred_images_grid, nrow=16), caption="Reconstructed")
+    masks_grid = wandb.Image(torchvision.utils.make_grid(masks_grid, nrow=16), caption="Masks")
+
+    
+    wandb.log({f"{mode}: AE evaluation Original Images":original_images}, step=epoch)
+    wandb.log({f"{mode}: AE evaluation Reconstructed images":reconstructed}, step=epoch)
+    wandb.log({f"{mode}: AE evaluation Masks":masks_grid}, step=epoch)
+
     epoch_loss = batch_loss/len(loader)
 
-    wandb.log({"Validation Loss": epoch_loss})
+    wandb.log({"Validation Loss": epoch_loss}, step=epoch)
 
     return epoch_loss
 
@@ -132,6 +173,21 @@ def main(cfg: DictConfig):
     CFG_DATA = cfg.data
     CFG_MODELS = cfg.models
     CFG_SETUP = cfg.setup
+    
+    if cfg.log_wandb == True:
+
+        if cfg.verbose == True :
+            print("Wandb configuration: ")
+
+            bprint(dict(CFG_SETUP.wandb))
+
+        wandb.login(key="ab18aafa8c70616ba4ef66844fc9444794cae54a", relogin=True)
+        wandb.init(
+            project= CFG_SETUP.wandb.project,
+            config = dict(CFG_SETUP.wandb.config),
+            name = CFG_SETUP.wandb.name,
+            group = CFG_SETUP.wandb.group
+        )
 
     #  ^ Hydra things
     epochs = CFG_SETUP.configuration.epochs
@@ -171,8 +227,9 @@ def main(cfg: DictConfig):
     train_dataset, validation_dataset, test_dataset = torch.utils.data.random_split(merged_dataset, partitions_ratio, generator=generator)
     # *
 
+
     #visu.plot([list_of_datasets[0][0][0]])
-    #exit()
+
     # * Dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, pin_memory=True, num_workers=8, collate_fn=collate_fn)
     validation_loader = DataLoader(validation_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=1, collate_fn=collate_fn)
@@ -190,7 +247,7 @@ def main(cfg: DictConfig):
         print("Model Loaded Succesfully Starting Finetunning")
 
     optimizer = hydra.utils.instantiate(CFG_SETUP.optimizer, params=model.parameters())
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss(reduction="none")
 
     optimal_loss = 10000
 
@@ -204,7 +261,6 @@ def main(cfg: DictConfig):
                            model=model,
                            criterion=criterion)
     
-    print(f"Validation Loss Epoch: {0} Value: {loss_validation}")
 
 
     _, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
@@ -212,8 +268,11 @@ def main(cfg: DictConfig):
                                 model=model, 
                                 checkpoint_path=checkpoint_name, 
                                 compare="<")
+
+    print(f"Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
     
     #wandb.log({"Validation Loss": loss_validation})
+    x_kernel, y_kernel = utils.get_sobel_kernel(device=device, chnls=3)
     
     for epoch in tqdm.tqdm(range(epochs), desc="Training Process", position=0, leave=False):
         
@@ -222,14 +281,16 @@ def main(cfg: DictConfig):
             loader=train_loader,
             model=model,
             criterion=criterion,
-            optimizer=optimizer
+            optimizer=optimizer,
+            epoch=epoch
         ) ## to fulfill
 
         print(f"Loss Epoch: {epoch} Value: {train_loss}")
         if ((epoch +1) % 10) == 0:
             loss_validation = eval(loader=validation_loader,
                                 model=model,
-                                criterion=criterion)
+                                criterion=criterion,
+                                epoch=epoch)
 
             updated, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
                                         actual_metric=loss_validation, 
@@ -238,7 +299,7 @@ def main(cfg: DictConfig):
                                         compare="<")
             
             if updated:
-                print(f"Model Updated: Epoch: {epoch}")
+                print(f"Model Updated: Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
             
             #wandb.log({"Validation Loss": loss_validation})
 
@@ -247,7 +308,9 @@ def main(cfg: DictConfig):
 
     loss_test = eval(loader=test_loader,
                      model=model,
-                     criterion=criterion)
+                     criterion=criterion,
+                     mode="Test",
+                     epoch=epoch)
     
     updated, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
                                 actual_metric=loss_test, 

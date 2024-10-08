@@ -87,6 +87,34 @@ class ProportionalScaling:
         
         return padded
 
+
+
+
+class ThresholdTransform(object):
+  def __init__(self, thr_255_chnl):
+    self.thr = thr_255_chnl/255   # input threshold for [0..255] gray level, convert to [0..1]
+
+  def __call__(self, x):
+    for idx, i in enumerate(self.thr):
+        x[idx, :, :] = x[idx, :, :] > i
+    
+    return (x.mean(0) < .9).to(x.dtype)  # do not change the data type
+  
+
+def binarize_background(img: TensorType["C", "H", "W"]):
+
+    channel_ordering = img.view(3, -1)
+    sorted_pixels, _ = torch.sort(channel_ordering, dim=1, descending=True)
+    median_percentile = sorted_pixels[:, :int(sorted_pixels.shape[1] * 0.25)]
+    mode_per_channels = torch.mode(median_percentile, dim=1).values
+    
+    Th = ThresholdTransform(mode_per_channels)
+
+    mask = Th(img)
+
+    return mask
+
+
 def compute_resize(shape, patch_size):
     offset = shape % patch_size
     if offset > (patch_size /2):

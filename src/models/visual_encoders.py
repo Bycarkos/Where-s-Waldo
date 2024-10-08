@@ -78,8 +78,6 @@ class LineAutoEncoder(nn.Module):
         else:
             self._norm = nn.BatchNorm2d(self._hidden_channels * (self._num_middle_conv+1))
         
-        self._max_pooling = nn.MaxPool2d(2, stride=2, padding=1, return_indices=True)
-        self._global_pooling = nn.AdaptiveAvgPool2d(1)
 
         self._list_convolutions = []
         self._list_deconvolutions = []
@@ -96,6 +94,9 @@ class LineAutoEncoder(nn.Module):
 
     def _initialize_encoder(self):
         
+        self._max_pooling = nn.MaxPool2d(2, stride=2, padding=1, return_indices=True)
+        self._global_pooling = nn.MaxPool2d(4,  return_indices=True)
+
         ## initialize encoder
         self._init_convolution = nn.Conv2d(in_channels=3, out_channels=self._hidden_channels, kernel_size=(3,3), device=device)
         if self._num_middle_conv == 1:
@@ -113,7 +114,7 @@ class LineAutoEncoder(nn.Module):
 
     def _initialize_decoder(self):
         self._max_unpooling = nn.MaxUnpool2d(2, stride=2, padding=1)
-
+        self._global_max_unpool = nn.MaxUnpool2d(4)
         if self._num_middle_conv == 1:
             self._output_deconvolution = nn.ConvTranspose2d(in_channels=self._output_channels, out_channels=self._hidden_channels, kernel_size=(3,3), device=device)
         else:
@@ -145,18 +146,26 @@ class LineAutoEncoder(nn.Module):
             x = conv(x)
             x = torch.relu(x)
 
+        
         x = self._norm(x)
         x = self._output_convolution(x)
-        self._encode_recover_shape = x.shape[2:]
         
-        x = self._global_pooling(x)
-
-        return  x.view(x.shape[0], -1), x
+        self._encode_recover_shape = x.shape
+        self._final_pooling_shape = x.view(x.shape[0], x.shape[1], -1).shape
+        
+        embedding, self._indices2 = torch.max(x.view(x.shape[0], x.shape[1], -1), dim=-1)
+        x = embedding.view(x.shape[0], -1)
+        
+        
+        return  embedding, x 
     
     def decoder(self, x):
         
         ## This computation because there when doing adaptive avg pooling the pixels in the upsampling have the value of the mean.
-        x = x + torch.zeros((x.shape[0], x.shape[1], *self._encode_recover_shape), device=device)
+        recover_x = torch.zeros(self._final_pooling_shape, device=device, requires_grad=False) #self._global_max_unpool(x, self._indices2, output_size=self._final_pooling_shape)# + torch.zeros((x.shape[0], x.shape[1], *self._encode_recover_shape), device=device)
+
+        recover_x[:, :, self._indices2] = x
+        x = recover_x.view(self._encode_recover_shape)
         x = self._output_deconvolution(x)
         x = torch.relu(x)
 
@@ -176,7 +185,7 @@ class LineAutoEncoder(nn.Module):
     def forward(self, x):
 
         embedding, x = self.encoder(x=x)
-
+        
         reconstructed_image = self.decoder(x=x)
     
         return reconstructed_image

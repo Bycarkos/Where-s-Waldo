@@ -1,10 +1,12 @@
+from visualizations import plot
+
+
 import torch
 import torch.nn as nn
 
 from  torchtyping import TensorType
 
 import os
-import umap
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats as st 
@@ -30,6 +32,17 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 
+
+def get_sobel_kernel(device, chnls=3):
+  x_kernel = [[1, 0, -1], [2, 0, -2], [1, 0, -1]]
+  x_kernel = torch.tensor(x_kernel, dtype=torch.float32).unsqueeze(0).expand(
+    1, chnls, 3, 3).to(device=device)
+  x_kernel.requires_grad = False
+  y_kernel = [[1, 2, 1], [0, 0, 0], [-1, -2, -1]]
+  y_kernel = torch.tensor(y_kernel, dtype=torch.float32).unsqueeze(0).expand(
+    1, chnls, 3, 3).to(device=device)
+  y_kernel.requires_grad = False
+  return x_kernel, y_kernel
 
 def update_and_save_model(previous_metric, actual_metric, model, checkpoint_path:str, compare:str="<"):
 

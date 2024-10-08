@@ -121,12 +121,14 @@ class EsposallesDataset(Dataset):
         image_line = line.image()
         augmented_image_line = self._transforms(image_line)
         non_augmented_image_line = self._non_augmentation_transforms(image_line)
+        copy = self._non_augmentation_transforms(image_line)
 
         ## Extract the ocr
         ocr = torch.tensor([self._map_ocr[i] for i in self._ocrs[idx]])
+        mask = dutils.binarize_background(copy)
 
 
-        return augmented_image_line, non_augmented_image_line, ocr, idx
+        return augmented_image_line, non_augmented_image_line, ocr, idx, mask.repeat(3, 1, 1)
 
 
     def collate_fn(self, batch:list):
@@ -140,12 +142,13 @@ class EsposallesDataset(Dataset):
             dict: Dictionary containing batched clips, labels, and paths.
         """
 
-        unbatched_lines, unbatched_non_augmented_lines, unbatched_ocrs, idx = zip(*batch)
+        unbatched_lines, unbatched_non_augmented_lines, unbatched_ocrs, idx, unbatched_mask = zip(*batch)
 
         batched_lines = torch.cat([d.unsqueeze(0) for d in unbatched_lines], dim=0)
         batched_non_augmented_lines = torch.cat([d.unsqueeze(0) for d in unbatched_non_augmented_lines], dim=0)
         batched_ocr = torch.cat([d.unsqueeze(0) for d in unbatched_ocrs], dim=0)
         batched_population = torch.tensor([d for d in idx])
+        bastched_masks = torch.cat([d.unsqueeze(0) for d in unbatched_mask], dim=0)
 
 
 
@@ -153,7 +156,8 @@ class EsposallesDataset(Dataset):
             image_lines = batched_lines,
             non_augmented_image_lines = batched_non_augmented_lines,
             ocrs = batched_ocr,
-            population= batched_population
+            population= batched_population,
+            masks = bastched_masks
         )
 
 
