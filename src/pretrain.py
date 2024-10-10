@@ -11,9 +11,8 @@ import data.volumes as dv
 ## Model Things
 from models import visual_encoders as VE
 import pytorch_warmup as warmup
-from transformers import get_cosine_schedule_with_warmup
-
-
+from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
+from losses.perceptual_loss import PerceptualLoss
 
 ### Utils
 import utils 
@@ -82,7 +81,7 @@ def batch_step(loader: Type[DataLoader],
                epoch:int=0):
     
     model.train()
-
+    perceptual_loss = PerceptualLoss().to(device)
     if sobel_kernel is not None:
         x_kernel, y_kernel = sobel_kernel
     batch_loss = 0
@@ -104,9 +103,11 @@ def batch_step(loader: Type[DataLoader],
         #reconstructed_image = reconstructed_image * STD + MEAN
 
         MSE = criterion(original_images, reconstructed_image)
-        if epoch == 100: loss = (torch.mean(MSE * masks)*10)
-            
-        else:loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10)
+        
+        loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10) + perceptual_loss(reconstructed_image, original_images) * 0.7
+        #loss = torch.mean(MSE)
+        #loss += perceptual_loss(reconstructed_image, original_images)
+      
 
         batch_loss += loss
 
@@ -133,6 +134,9 @@ def eval(loader: Type[DataLoader],
     original_images_grid = None
     reconstructred_images_grid = None
     masks_grid = None
+
+    perceptual_loss = PerceptualLoss().to(device)
+
     for idx, batch in tqdm.tqdm(enumerate(loader), desc="Validation/Test Batch Loop", leave=True, position=1):
         images = batch["image_lines"].to(device)
         original_images = batch["non_augmented_image_lines"].to(device)
@@ -141,8 +145,8 @@ def eval(loader: Type[DataLoader],
 
         reconstructed_image = model(images)
 
-        original_images = original_images * STD + MEAN
-        reconstructed_image = reconstructed_image * STD + MEAN
+        original_images = torch.clip(original_images * STD + MEAN, min=0., max=1.)
+        #reconstructed_image = reconstructed_image * STD + MEAN
 
         #visu.plot([original_images[0].detach().cpu(), reconstructed_image[0].detach().cpu()])
         #exit()
@@ -159,14 +163,14 @@ def eval(loader: Type[DataLoader],
 
         MSE = criterion(original_images, reconstructed_image)
 
-        loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10)
-        
+        loss = (torch.mean(MSE)) + (torch.mean(MSE * masks)*10) + perceptual_loss(reconstructed_image, original_images) * 0.7
+
         batch_loss += loss
 
 
-    original_images = wandb.Image(torchvision.utils.make_grid(original_images_grid, nrow=16), caption="Original")
-    reconstructed = wandb.Image(torchvision.utils.make_grid(reconstructred_images_grid, nrow=16), caption="Reconstructed")
-    masks_grid = wandb.Image(torchvision.utils.make_grid(masks_grid, nrow=16), caption="Masks")
+    original_images = wandb.Image(torchvision.utils.make_grid(original_images_grid[:100], nrow=16), caption="Original")
+    reconstructed = wandb.Image(torchvision.utils.make_grid(reconstructred_images_grid[:100], nrow=16), caption="Reconstructed")
+    masks_grid = wandb.Image(torchvision.utils.make_grid(masks_grid[:100], nrow=16), caption="Masks")
 
     
     wandb.log({f"{mode}: AE evaluation Original Images":original_images}, step=epoch)
@@ -212,21 +216,23 @@ def main(cfg: DictConfig):
     # *Extracting the Datasets
     means_width = []
     means_heigth = []
-    list_of_datasets = []
 
+    dict_datasets = {}
+    
     for dataset_object in (CFG_DATA.datasets):
         data = instantiate(CFG_DATA.datasets[dataset_object])
-        list_of_datasets.append(data)
+        dict_datasets[dataset_object] = data
+
         means_heigth.append(np.mean(data.line_heights))
         means_width.append(np.mean(data.line_widths))
 
     standarized_width = ceil(np.mean(means_width))
     standarized_height = ceil(np.mean(means_heigth))
 
-    for dts in list_of_datasets:
+    for dts_name, dts  in dict_datasets.items():
         dts.define_transforms((standarized_height, standarized_width))
     
-    
+    list_of_datasets = list(dict_datasets.values())
     if len(list_of_datasets) == 1:
         print("Only training with one Dataset")
         merged_dataset = list_of_datasets[-1]
@@ -247,6 +253,9 @@ def main(cfg: DictConfig):
     validation_loader = DataLoader(validation_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=0, collate_fn=collate_fn)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=1, collate_fn=collate_fn)
     # *
+    
+
+    
 
     print("DATA LOADER SUCCESFULLY GENERATED")
 
@@ -263,17 +272,20 @@ def main(cfg: DictConfig):
     criterion = nn.MSELoss(reduction="none")
     
     
-
-    num_warmup_steps = 500  
+    ## ** Scheduler
+    num_warmup_steps = 1000  
     train_loader_len = len(train_loader)  # Assuming you have defined train_loader
     total_steps = epochs * train_loader_len
+    num_cycles = epochs // 2
     
-    scheduler = get_cosine_schedule_with_warmup(
+    scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
         optimizer,
         num_warmup_steps=num_warmup_steps,
-        num_training_steps=total_steps
+        num_training_steps=total_steps,
+        num_cycles=num_cycles,
     )
 
+    ## **
     optimal_loss = 10000
 
     os.makedirs("./checkpoints", exist_ok=True)
