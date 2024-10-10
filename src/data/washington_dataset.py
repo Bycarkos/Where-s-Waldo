@@ -90,7 +90,6 @@ class WashingtonDataset(Dataset):
     
         #self.define_transforms()
 
-        print(self._line_paths)
     
     
     @staticmethod

@@ -146,8 +146,9 @@ class LineAutoEncoder(nn.Module):
             self._norm = nn.BatchNorm2d(self._hidden_channels * (self._num_middle_conv+1))
         
 
-        self._list_convolutions = []
-        self._list_deconvolutions = []
+        self._list_convolutions = nn.ModuleList()
+        self._list_deconvolutions = nn.ModuleList()
+
         self._list_pooling = []
 
         

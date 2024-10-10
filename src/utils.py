@@ -158,6 +158,26 @@ def compute_confidence_interval(data:list, alpha:float):
 
 
 
+@torch.no_grad()
+def extract_embeddings_from_visual_encoder(loader:Type[torch.utils.data.DataLoader],
+                                           model: Type[nn.Module]):
+    
+    model.eval()
+    final_embeddings = None
+    
+    for idx, batch in tqdm.tqdm(enumerate(loader), desc="Extracting Embeddings", leave=True, position=1):
+        images = batch["image_lines"].to(device)
+
+        embedding, _ = model.encoder(images)
+        if final_embeddings is None:
+            final_embeddings = embedding
+        else:
+            final_embeddings = torch.vstack((final_embeddings, embedding))
+
+    final_embeddings = final_embeddings.cpu().numpy()
+
+    return final_embeddings
+
 
 
 @torch.no_grad()
