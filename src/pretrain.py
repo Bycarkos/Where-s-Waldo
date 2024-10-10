@@ -6,13 +6,14 @@ from data.graph_sampler import AttributeSampler
 from data.ced_dataset import CEDDataset
 from data.esposalles_dataset import EsposallesDataset
 from data.iam_dataset import IAMDataset
+from data.washington_dataset import WashingtonDataset
 import data.volumes as dv
 
 ## Model Things
 from models import visual_encoders as VE
 import pytorch_warmup as warmup
 from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
-from losses.perceptual_loss import PerceptualLoss
+from losses.perceptual_loss import ResNetFeatureExtractor, VGGFeatureExtractor
 
 ### Utils
 import utils 
@@ -81,7 +82,7 @@ def batch_step(loader: Type[DataLoader],
                epoch:int=0):
     
     model.train()
-    perceptual_loss = PerceptualLoss().to(device)
+    perceptual_loss = ResNetFeatureExtractor().to(device)
     if sobel_kernel is not None:
         x_kernel, y_kernel = sobel_kernel
     batch_loss = 0
@@ -135,7 +136,7 @@ def eval(loader: Type[DataLoader],
     reconstructred_images_grid = None
     masks_grid = None
 
-    perceptual_loss = PerceptualLoss().to(device)
+    perceptual_loss = ResNetFeatureExtractor().to(device)
 
     for idx, batch in tqdm.tqdm(enumerate(loader), desc="Validation/Test Batch Loop", leave=True, position=1):
         images = batch["image_lines"].to(device)

@@ -196,7 +196,6 @@ class LineAutoEncoder(nn.Module):
 
         x = self._init_convolution(x)
         x = torch.relu(x)
-        self.__x_init_skip_connections = x
 
         ## getting the exepcted shape because of rounding     
         # As explained in the docs for MaxUnpool: when doing MaxPooling, there might be some pixels that get rounded up due to integer division on the input size.
@@ -210,6 +209,7 @@ class LineAutoEncoder(nn.Module):
             x = conv(x)
             x = torch.relu(x)
 
+        self.__x_init_skip_connections = x
         
         x = self._norm(x)
         x = self._output_convolution(x)
@@ -230,10 +230,14 @@ class LineAutoEncoder(nn.Module):
         ## This computation because there when doing adaptive avg pooling the pixels in the upsampling have the value of the mean.
         recover_x = torch.zeros(self._final_pooling_shape, device=device, requires_grad=False) #self._global_max_unpool(x, self._indices2, output_size=self._final_pooling_shape)# + torch.zeros((x.shape[0], x.shape[1], *self._encode_recover_shape), device=device)
 
+        # First skip connection
         recover_x[:, :, self._indices2] = x
         x = recover_x.view(self._encode_recover_shape) + self.__x_skip_connection
         x = self._output_deconvolution(x)
         x = torch.relu(x)
+        
+        # Second skip connection
+        x = x + self.__x_init_skip_connections
 
         for convt in self._list_deconvolutions:
             x = convt(x)
@@ -242,7 +246,7 @@ class LineAutoEncoder(nn.Module):
         #print(f"Shape before unpooling: {x.shape}")
         x = self._max_unpooling(x, self._indices, output_size=self._pooling_shape)  # Use output_size to ensure consistency
         #print(f"Shape after unpooling: {x.shape}")
-        x = x + self.__x_init_skip_connections
+        #x = x + self.__x_init_skip_connections
         x = self._init_deconvolution(x) 
         
         return x
