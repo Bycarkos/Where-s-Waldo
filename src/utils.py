@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from  torchtyping import TensorType
+from jaxtyping import Float, Array
 
 import os
 import matplotlib.pyplot as plt
@@ -160,7 +161,7 @@ def compute_confidence_interval(data:list, alpha:float):
 
 @torch.no_grad()
 def extract_embeddings_from_visual_encoder(loader:Type[torch.utils.data.DataLoader],
-                                           model: Type[nn.Module]):
+                                           model: Type[nn.Module]) -> Float[Array, "Total_Images embed_dim"]:
     
     model.eval()
     final_embeddings = None
@@ -285,20 +286,16 @@ def extract_intra_cluster_nearest_neighboors_at_k(x: TensorType,
 
     dict_nearest_neighbors = {}
     distances_dict = {}
-    for idx in range(x.shape[1]):
-        embeddings = x[:, idx]
-        distances = torch.cdist(embeddings, embeddings, p=2)
-        distances_dict[idx] = distances
-        
-        # Set the diagonal to a large positive number to avoid self-matching
-        distances.fill_diagonal_(float('inf'))
-        # Get the top K nearest neighbors for each embedding (smallest distances)
-        top_k_values, top_k_indices = torch.topk(distances, top_k, dim=1, largest=False)
-
-        # Create a dictionary mapping each index to its top K nearest neighbors
-        nearest_neighbors = {ix: top_k_indices[ix].tolist() for ix in range(distances.size(0))}
-
-        dict_nearest_neighbors[idx] = nearest_neighbors
+    distances = torch.cdist(x, x, p=2)
     
-    return dict_nearest_neighbors, distances_dict              
+    # Set the diagonal to a large positive number to avoid self-matching
+    distances.fill_diagonal_(float('inf'))
+    # Get the top K nearest neighbors for each embedding (smallest distances)
+    top_k_values, top_k_indices = torch.topk(distances, top_k, dim=1, largest=False)
+
+    # Create a dictionary mapping each index to its top K nearest neighbors
+    nearest_neighbors = {ix: top_k_indices[ix].tolist() for ix in range(distances.size(0))}
+
+
+    return nearest_neighbors, distances              
 
