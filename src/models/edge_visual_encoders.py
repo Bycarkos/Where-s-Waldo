@@ -11,6 +11,8 @@ from omegaconf import DictConfig
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+from torchtyping import TensorType
+
 import pdb
 
 device = "cuda" if torch.cuda.is_available else "cpu"
@@ -145,3 +147,32 @@ class EdgeAttFeatureExtractor(nn.Module):
             
         return x
     
+
+
+
+class DisentanglementAttentionEncoder(nn.Module):
+
+    def __init__(self, in_features:int, out_features:int) -> None:
+        
+
+        self._in_features = in_features
+        self._out_features= out_features
+
+        self._Q = nn.Linear(in_features=self._in_features, out_features=self._out_features)
+        self._K = nn.Linear(in_features=self._in_features, out_features=self._out_features)
+        self._V = nn.Linear(in_features=self._in_features, out_features=self._out_features)
+
+        self._attention_mechanism = att.ScaledDotProductAttention()
+
+
+    def forward(self, embeddings: TensorType["Batch", "d"]) -> TensorType["embedding", "d"]:
+
+        queries = self._Q(embeddings)
+        keys = self._K(embeddings)
+        values = self._V(embeddings)
+
+        x, self._attention_values = self._attention_mechanism(query=queries,
+                                                              key=keys,
+                                                              value=values)
+        
+        return x
