@@ -667,3 +667,21 @@ class EdgeAttFeatureExtractor(nn.Module):
 
     return metrics
 """
+
+
+
+"""
+        #if w < self.general_width:
+        #    image_line = transforms.resize(img=image_line, size=(self.general_height, self.general_width))
+        #else:
+        #    image_line = image_line[:, :, :self.general_width]
+        #    image_line = transforms.resize(img=image_line, size=(self.general_height , self.general_width))    
+
+        #image_line = transforms.normalize(image_line, mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))   
+        #image_line = self._transforms(image_line)
+
+        #page_cutted = torch.from_numpy(page_cutted).permute(2, 0, 1)     
+        #page_cutted = transforms.normalize(page_cutted, mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+        ## Extract the ocr
+
+"""

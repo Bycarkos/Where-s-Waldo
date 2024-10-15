@@ -33,11 +33,11 @@ def plot(imgs, row_title=None, **imshow_kwargs):
         # Make a 2d grid even if there's just 1 row
         imgs = [imgs]
 
-    num_rows = len(imgs)
-    num_cols = len(imgs[0])
+    num_cols = len(imgs)
+    num_rows = len(imgs[0])
     _, axs = plt.subplots(nrows=num_rows, ncols=num_cols, squeeze=False)
-    for row_idx, row in enumerate(imgs):
-        for col_idx, img in enumerate(row):
+    for col_idx, row in enumerate(imgs):
+        for row_idx, img in enumerate(row):
             boxes = None
             masks = None
             if isinstance(img, tuple):
@@ -71,8 +71,8 @@ def plot(imgs, row_title=None, **imshow_kwargs):
             axs[row_idx, 0].set(ylabel=row_title[row_idx])
 
     plt.tight_layout()
-    #plt.show()
-    plt.savefig("dummy_example_batch.png")
+    plt.show()
+    #plt.savefig("dummy_example_batch.png")
 
 
 def adjacent_values(vals, q1, q3):

@@ -23,8 +23,9 @@ import tqdm
 import pickle
 from sklearn.model_selection import KFold
 from sklearn.neighbors import KNeighborsClassifier
-
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+import networkx as nx
 
 import fasttext.util
 
@@ -44,6 +45,55 @@ def get_sobel_kernel(device, chnls=3):
     1, chnls, 3, 3).to(device=device)
   y_kernel.requires_grad = False
   return x_kernel, y_kernel
+
+
+def compute_dijkstra(graph, source, target):
+    try:
+        # Compute the shortest path between source and target using Dijkstra's algorithm
+        path = nx.dijkstra_path(graph, source=source, target=target, weight='weight')
+        # Compute the total path length
+        path_length = nx.dijkstra_path_length(graph, source=source, target=target, weight='weight')
+        
+        return path, path_length
+    except nx.NetworkXNoPath:
+        return None, float('inf')  # If no path exists
+    
+
+def softmax(x):
+    exp_x = torch.exp(-x)  # Apply negative to make smaller distances higher probabilities
+    return exp_x / torch.sum(exp_x)
+
+def reciprocal_knn_graph(nearest_neighbors, distance_matrix):
+    G = nx.Graph()  # Initialize an empty graph
+    triplets = []
+
+    for i, neighbors in nearest_neighbors.items():
+        # Get distances from point i to its neighbors
+        distances_i = distance_matrix[i, neighbors]
+        # Compute softmax for distances from i to neighbors
+        probs_i = softmax(distances_i)
+        G.add_node(i, dataset_index=i, label=str(i))
+        
+        for idx, neighbor in enumerate(neighbors):
+            G.add_node(neighbor, dataset_index=neighbor, label=str(neighbor))
+
+            # Get the reverse nearest neighbors from the other node
+            if i in nearest_neighbors[neighbor]:
+                # Get distances from neighbor to i and compute softmax
+                distances_j = distance_matrix[neighbor, nearest_neighbors[neighbor]]
+                probs_j = softmax(distances_j)
+                
+                # Multiply softmax probabilities from both directions
+                weight = probs_i[idx] * probs_j[nearest_neighbors[neighbor].index(i)]
+                weight = weight**(-1)
+                
+                # Add the edge to the graph
+                G.add_edge(i, neighbor, weight=weight.item())
+                
+                # Store the triplet (i, weight, neighbor)
+                triplets.append((i, weight.item(), neighbor))
+
+    return triplets, G
 
 def update_and_save_model(previous_metric, actual_metric, model, checkpoint_path:str, compare:str="<"):
 
@@ -79,6 +129,18 @@ def read_pickle(filepath:str) -> Any:
         
     return obj
         
+def export_graph(graph, file_path='graph.gexf', format='gexf'):
+    """
+    Exports the NetworkX graph to a file in the specified format.
+    Supported formats: 'gexf', 'graphml'
+    """
+    if format == 'gexf':
+        nx.write_gexf(graph, file_path)
+    elif format == 'graphml':
+        nx.write_graphml(graph, file_path)
+    else:
+        raise ValueError(f"Unsupported format '{format}'. Use 'gexf' or 'graphml'.")
+    
 
 
 def extract_subgraph(graph:Type[HeteroData], 
@@ -298,4 +360,5 @@ def extract_intra_cluster_nearest_neighboors_at_k(x: TensorType,
 
 
     return nearest_neighbors, distances              
+
 

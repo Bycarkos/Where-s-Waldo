@@ -7,6 +7,7 @@ except:
     from volumes import Volume, Page, Line, sort_key
     import dataset_utils as dutils
 
+
 ## geometrical data packages
 import torch
 from torch_geometric.data import HeteroData
@@ -29,6 +30,7 @@ from PIL import Image
 import itertools
 import re
 import pdb
+import json
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -39,21 +41,19 @@ from omegaconf import DictConfig, OmegaConf
 
 class CEDDataset(Dataset):
 
-    def __init__(self, Volumes: List[Volume],
-                        cfg: DictConfig):
+    def __init__(self, path: Path, volumes_years: List[int], attributes:List[str]):
         
         super(CEDDataset, self).__init__()
 
-        self._cut_image = cfg.cut_image
-        self._patch_size = cfg.patch_size
-        
-        self._volumes = Volumes
+        self._years_to_use: List[int] = volumes_years
+        self._path:Path = path
+        self._attributes = attributes
 
         self._total_attributes_nodes = 0
         self._total_individual_nodes = 0
         self._total_entities = set([])
 
-
+        self.load_volumes()
 
         for volume in self._volumes:
             self._total_attributes_nodes += torch.tensor(volume.count_attributes())
@@ -70,8 +70,108 @@ class CEDDataset(Dataset):
 
 
         self.extract_information()
-        self.standarize_image_shape()
-        #self.define_transforms()
+
+    def load_volumes(self) -> None:
+        
+        """
+        Load and process volume data from specified paths.
+
+        This function loads volume data from a predefined path, processes the data, and extracts relevant
+        information, including ground truth data and visual information for each page in the volumes.
+
+        The function performs the following steps:
+        1. Define entities and paths.
+        2. Load volume data for specified years.
+        3. For each volume, download and process pages.
+        4. Extract and process ground truth information for each page.
+        5. Create `Volume` objects containing the processed data for each volume.
+
+        This function expects Hydra configuration arguments to specify data paths and other settings.
+
+        Entities:
+        
+        Data Loading:
+            - Load volume data from the specified years.
+            - For each volume, iterate through pages and process ground truth data.
+            - Extract information such as lines and bounding boxes.
+            - Create `Page` objects with the extracted data.
+
+        Returns:
+            list: A list of `Volume` objects containing processed page data.
+
+        Example:
+            volumes = load_volumes()
+            for volume in volumes:
+                print(volume)
+        """
+        
+        #~ args should be and hydra config about data
+        
+
+        data_path = Path(self._path) #Path("data/CED/SFLL")
+        
+        
+        ## * data loading
+        
+        data_volumes = [Path(data_path / str(year)) for year in (self._years_to_use)]
+        self._volumes = []
+        
+        for auxiliar_volume in data_volumes:
+            print("STARTING DOWNLOADING VOLUMES: VOLUME-", auxiliar_volume)
+            pages_path = sorted([f.path for f in os.scandir(auxiliar_volume) if f.is_dir()])
+            
+            #? Extract groundTruth
+            with open(Path(auxiliar_volume, "graph_gt_corroborator.json")) as file:
+                graph_gt = json.load(file)
+                        
+            pages = []
+            for idx, page_folder in enumerate(pages_path):
+                gt_page = pd.read_csv(page_folder + "/gt_alignement.csv")
+                
+                ## ?extract the information of the lines first
+                page_lines = []
+                #page = Image.open(page_folder+".jpg")
+                n_families = graph_gt[os.path.basename(page_folder)+".jpg"]["families"]
+                
+                with open(page_folder + "/info.json", "rb") as file:
+                    load_file = json.load(file) 
+                    
+                    if load_file.get("rows_bbox", None) is None: bboxes = None
+                    else: bboxes = load_file["rows_bbox"]
+
+
+                    if load_file.get("page_bbox", None) is None:
+                        page_bboxes = None
+                    else:
+                        page_bboxes = load_file["page_bbox"] 
+                
+                #? condition to remove pages with inconsitencis
+                if len(glob.glob(os.path.join(page_folder, "row_*"))) != graph_gt[os.path.basename(page_folder)+".jpg"]["individus"]:
+                    print(os.path.basename(page_folder)+".jpg")
+                    continue
+                
+                else:
+                    percentil_85 = int(np.percentile(np.array(bboxes)[:,-1], 90))
+
+                    lines_page = (glob.glob(os.path.join(page_folder, "row_*")))
+                    sorted_lines = sorted(lines_page, key=sort_key)
+                    
+                    #? Extract groundTruth
+
+                    
+                    for idx_line, path_line in enumerate(sorted_lines):
+                        
+                        
+                        ocr = gt_page.loc[idx_line, self._attributes].values
+                        bbox_line = bboxes[idx_line]
+                        bbox_line[-1] = percentil_85
+                        page_lines.append(Line(Path(path_line), bbox_line, bbox_line, ocr))
+                
+                pages.append(Page(Path(page_folder+".jpg"), page_bboxes, page_lines, n_families))
+                
+            self._volumes.append(Volume(auxiliar_volume, pages, auxiliar_volume, self._attributes))
+
+
 
     def standarize_image_shape(self):
         
@@ -85,8 +185,7 @@ class CEDDataset(Dataset):
             
         ## reshaping the image
         self.general_width, self.general_height = dutils.extract_optimal_shape(min_width=min_width, max_height=max_height, patch_size=self._patch_size)
-
-        
+      
 
     def extract_information(self):
 
@@ -106,11 +205,9 @@ class CEDDataset(Dataset):
                 for line in page._individuals:
                     self._ocrs.append(tuple(line._ocr))
                     self._total_ocrs.extend(line._ocr)
-                    w, h = line._bbox[2:]
+                    w, h = (self._line_paths[-1][0].shape()[0:2])
                     self.line_heights.append(h)
-                    self.line_widths.append(w)
-        
-        
+                    self.line_widths.append(w)  
             
             population_belong_volue = np.arange(total_population, total_population + population_actual_year)
             self._population_per_volume.append(population_belong_volue)
@@ -120,54 +217,64 @@ class CEDDataset(Dataset):
 
         self._map_ocr = {ocr: idx for idx, ocr in enumerate(set(self._total_ocrs))}
 
+
+    def define_page_transforms(self, new_shape):
+        self._page_augmentation = v2.Compose([
+                v2.ToImage(),  
+                v2.ToDtype(torch.uint8, scale=True),          
+                dutils.ProportionalScaling(new_shape), ## Inner scale
+                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+
     def define_transforms(self, new_shape):
 
         self._transforms = v2.Compose([
-            v2.ColorJitter(brightness=0.1, contrast=0.1, hue=10),
-            v2.GaussianBlur(kernel=5, sigma=(0.1, 2.0)),
-            v2.GaussianNoise(),
+
             v2.ToImage(),  
             v2.ToDtype(torch.uint8, scale=True),          
-            v2.Resize(new_shape, antialias=True),
-            v2.ToDtype(torch.float32, scale=True),  # Normalize expects float input
+            dutils.ProportionalScaling(new_shape), ## Inner scale
+            v2.RandomGrayscale(p=0.4),
             v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+       
+
+        self._non_augmentation_transforms = v2.Compose([
+                v2.ToImage(),  
+                v2.ToDtype(torch.uint8, scale=True),          
+                dutils.ProportionalScaling(new_shape), ## Inner scale
+                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
         
+
+
     def __len__(self):
         return len(self._line_paths)
+    
+    def _getpage(self, idx):
+
+        _, image_page_idx = self._line_paths[idx]
+        page = self._page_paths[image_page_idx]
+        image_page = page.image()
+        augmented_page_image = self._transforms(image_page)
+
+        return augmented_page_image
 
     def __getitem__(self, idx):
                     
         line, image_page_idx = self._line_paths[idx]
 
-        # extract the pages
-        px, py, pw, ph = self._page_paths[image_page_idx]._bbox if self._page_paths[image_page_idx]._bbox is not None else [-1, -1, -1, -1] 
-        page = self._page_paths[image_page_idx]
-        page_cutted = page.image()[py:py+ph, px:px+pw, :]   
-        page_cutted = (page_cutted/255).astype(np.float32)    
-
         image_line = line.image()
-        
-        if self._cut_image is True: image_line = image_line[:, :self.general_width, :]
+        augmented_image_line = self._transforms(image_line)
+        non_augmented_image_line = self._non_augmentation_transforms(image_line)
+        copy = self._non_augmentation_transforms(image_line)
 
-        image_line = self._transforms(image_line)
-
-        #if w < self.general_width:
-        #    image_line = transforms.resize(img=image_line, size=(self.general_height, self.general_width))
-        #else:
-        #    image_line = image_line[:, :, :self.general_width]
-        #    image_line = transforms.resize(img=image_line, size=(self.general_height , self.general_width))    
-
-        #image_line = transforms.normalize(image_line, mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))   
-        #image_line = self._transforms(image_line)
-
-        #page_cutted = torch.from_numpy(page_cutted).permute(2, 0, 1)     
-        #page_cutted = transforms.normalize(page_cutted, mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ## Extract the ocr
         ocr = torch.tensor([self._map_ocr[i] for i in self._ocrs[idx]])
+        mask = dutils.binarize_background(copy)
 
 
-        return image_line, ocr, idx
+        return augmented_image_line, non_augmented_image_line, ocr, idx, mask.repeat(3, 1, 1)
+
 
 
     def collate_fn(self, batch:list):
@@ -181,23 +288,26 @@ class CEDDataset(Dataset):
             dict: Dictionary containing batched clips, labels, and paths.
         """
 
-        unbatched_lines, unbatched_ocrs, idx = zip(*batch)
+        unbatched_lines, unbatched_non_augmented_lines, unbatched_ocrs, idx, unbatched_mask = zip(*batch)
 
         batched_lines = torch.cat([d.unsqueeze(0) for d in unbatched_lines], dim=0)
+        batched_non_augmented_lines = torch.cat([d.unsqueeze(0) for d in unbatched_non_augmented_lines], dim=0)
         batched_ocr = torch.cat([d.unsqueeze(0) for d in unbatched_ocrs], dim=0)
         batched_population = torch.tensor([d for d in idx])
-
+        bastched_masks = torch.cat([d.unsqueeze(0) for d in unbatched_mask], dim=0)
 
         return dict(
             image_lines = batched_lines,
+            non_augmented_image_lines = batched_non_augmented_lines,
             ocrs = batched_ocr,
-            population= batched_population
+            population= batched_population,
+            masks = bastched_masks
         )
 
 if __name__ == "__main__":
 
 
-    a = CEDDataset(path="/home/cboned/data/HTR/CED")
-
-    print(a[0])
+    a = CEDDataset(path="/home/cboned/data/HTR/CED/SFLL", volumes_years=[1889], attributes=["nom"])
+    a.define_transforms(new_shape=(50, 1500))
+    print(a[0][0].shape)
 
