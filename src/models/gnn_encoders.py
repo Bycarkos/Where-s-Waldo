@@ -1,3 +1,7 @@
+import models.attentions as att
+
+
+
 import torch.nn as nn
 import torch
 from torch_geometric.nn import HGTConv, HeteroConv, GCNConv, SAGEConv, GATConv, Linear
@@ -30,24 +34,20 @@ class ForwardAttributeGnn(nn.Module):
         self._edge_space_projection = nn.Parameter(data=torch.randn(size=(n_different_edges, self.embedding_size, self.embedding_size)), requires_grad=True).to(device=device)
         nn.init.kaiming_uniform_(self._edge_space_projection)
 
-        self._edge_space_aggregator = nn.Linear(in_features=2*self.embedding_size, out_features=self.embedding_size)
+        self._edge_space_aggregator = nn.Linear(in_features=self.embedding_size, out_features=self.embedding_size)
 
     
-    def compute_edge_message(self, src_embeddings, positional_features):
+    def compute_edge_message(self, src_embeddings: TensorType["batch", "|E|", "d"]):
         
-        src_embeddings = src_embeddings.unsqueeze(1).repeat(1, positional_features.shape[1],1)
-        individual_edge_information = torch.cat((src_embeddings, positional_features), dim=-1)
-        aggregated_information = self._edge_space_aggregator(individual_edge_information) #(B, selg._attributes, embeddingsize )
-        edge_space_projector = torch.einsum('bai,aij->baj', aggregated_information, self._edge_space_projection)
+        aggregated_information : TensorType["batch", "|E|", "d"] = self._edge_space_aggregator(src_embeddings) #(B, self._attributes, embeddingsize )
+        edge_space_projector : TensorType["batch", "|E|", "d"] = torch.einsum('bai,aij->baj', aggregated_information, self._edge_space_projection)
 
         return edge_space_projector
 
-    def forward(self,image_features:TensorType["batch", "embedding_size"],
-                edge_attributes: TensorType["batch", "Nattributes", "embedding_size"] 
-):
+    def forward(self, x:TensorType["batch", "|E|", "d"]):
 
 
-        forward_message = self.compute_edge_message(src_embeddings=image_features, positional_features=edge_attributes)
+        forward_message = self.compute_edge_message(src_embeddings=x)
         
 
         return forward_message     
@@ -69,6 +69,12 @@ class BackwardAttributeGnn(nn.Module):
         
         nn.init.kaiming_uniform_(self._edge_space_projection)
 
+        self._Q = nn.Linear(in_features=embedding_size, out_features=embedding_size)
+        self._K = nn.Linear(in_features=embedding_size, out_features=embedding_size)
+        self._V = nn.Linear(in_features=embedding_size, out_features=embedding_size)
+
+        self._attention_mechanism = att.ScaledDotProductAttention()
+
 
     def compute_semantic_message(self, attribute_embeddings: TensorType["batch", "attribute_nodes", "embedding_size"]):
         
@@ -77,11 +83,21 @@ class BackwardAttributeGnn(nn.Module):
         #[a, i, j ]
         edge_space_projector = torch.einsum('bai,aij->baj', attribute_embeddings, self._edge_space_projection)
         edge_space_projector = self._activation(edge_space_projector)
-        weighted_embeddings = torch.sum(edge_space_projector * self._self_weighted, dim=1)
-        return weighted_embeddings
+        
+        queries = self._Q(edge_space_projector)
+        keys = self._K(edge_space_projector)
+        values = self._V(edge_space_projector)
+        
+        # TensorType["B", "d"]
+        contextual_entity_embedding, self._attentions = self._attention_mechanism(query=queries,
+                                                                key=keys,
+                                                                value=values)
+        contextual_entity_embedding: TensorType["B", "d"] = torch.sum(contextual_entity_embedding, dim=1)
+
+        return contextual_entity_embedding
     
         
-    def forward(self, attribute_embeddings: TensorType["n_attributes", "total_nodes", "embedding_size"]):
+    def forward(self, attribute_embeddings: TensorType["B", "|E|", "d"]):
         
         embeddings_individuals = self.compute_semantic_message(attribute_embeddings=attribute_embeddings)
 

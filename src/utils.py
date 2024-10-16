@@ -243,27 +243,6 @@ def extract_embeddings_from_visual_encoder(loader:Type[torch.utils.data.DataLoad
 
 
 
-@torch.no_grad()
-def extract_embeddings_from_graph(loader ,
-                                    graph,
-                                    model):
-    
-    model.eval()
-    attribute_embeddings = graph.x_attributes.to(device)
-    entity_embeddings = graph.x_entity.to(device)
-    
-    for idx, dict_images in tqdm.tqdm(enumerate(loader), desc="Extracting the embeddings from the model"):
-        images = dict_images["image_lines"].to(device)
-        ocr_indexes = dict_images["ocrs"].to(device)
-        population = dict_images["population"].to(device)
-
-        attribute_representation, individual_embeddings = model(x=images)#.encode_attribute_information(image_features=image_features, edge_attributes=edge_features) #message_passing
-        attribute_embeddings[population] = attribute_representation
-        if individual_embeddings is not None:
-            entity_embeddings[population, 0] = individual_embeddings
-
-    return attribute_embeddings, entity_embeddings
-
 def extract_language_embeddings(list_possible_ocr: list, embedding_size: int, filepath:str):
     
     ft = fasttext.load_model('cc.ca.300.bin')

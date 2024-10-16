@@ -61,6 +61,7 @@ class ProportionalScaling:
         new_height, new_width = int(img_height * factor + 0.999), int(
             img_width * factor + 0.999
         )
+
         # logging.debug(f"New image size: {new_width} {new_height}")
 
         img = transforms.functional.resize(img, [new_height, new_width])

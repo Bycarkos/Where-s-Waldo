@@ -1,15 +1,14 @@
 ## Dataset Things
-from data.volumes import Volume, Page, Line
+import torch.utils
+import torch.utils.data
 from data.graphset import Graphset
-from data.graph_sampler import GraphSampler, AttributeSampler
-from data.ced_dataset import CEDDataset
+from data import CEDDataset, WashingtonDataset, IAMDataset, EsposallesDataset
 
-import data.volumes as dv
 
 ## Model Things
-from models import gnn_encoders as gnn
-from models import visual_encoders as VE
-from models import edge_visual_encoders as EVE
+from models.gnn_encoders import AttributeGNN
+from models.visual_encoders import LineAutoEncoder
+from models.edge_visual_encoders import DisentanglementAttentionEncoder
 from models.graph_construction_model import MMGCM
 
 
@@ -26,18 +25,18 @@ import pipelines as pipes
 import torch.nn as nn
 import torch
 from torch.utils.data import DataLoader
-
 from torch.optim import Adam
+from pytorch_metric_learning import miners, losses
+from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 
 ## Typing Packages
 from typing import *
-from pytorch_metric_learning import miners, losses
-
+from jaxtyping import Float, Array
 
 ## Configuration Package
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from hydra.utils import instantiate
 
 ## Experiment Tracking packages
@@ -47,21 +46,13 @@ import tqdm
 
 ## Common packages
 import os
-from PIL import Image
-import matplotlib.pyplot as plt
-import pickle
-import networkx as nx
-from networkx.algorithms import bipartite
-
-
-import umap
-import umap.plot
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
 from beeprint import pp as bprint
 import pdb
+from math import ceil
+import numpy as np
 
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 """
@@ -77,31 +68,6 @@ Commented out Code can also be Styled to make it Clear the Code shouldn't be The
 Any Other Comment Styles you'd like can be Specified in the Settings.
 """
 
-
-"""
-                if mode == "validation" or mode == "test":
-                    previous_x_dict = graph_structure.x_dict   
-                    updated_dict = x_dict 
-                    
-                    dirname = f"./plots/shifts/{attribute}/{mode}"
-                    name_file = f"{attribute}_epoch_{epoch}_{idx}_drift.jpg"
-                    fig_path = os.path.join(dirname, name_file)
-                    dict_drift[name_file] = population.cpu().numpy()
-                    
-                    
-                    
-                    x_previous = previous_x_dict[attribute].detach().cpu().numpy()
-                    x_after = updated_dict[attribute].detach().cpu().numpy()
-                            
-                    evaluate_shift(x_previous=x_previous, x_after=x_after, population=population.cpu().numpy(), fig_name=fig_path)
-      
-      
-            if mode == "validation" or mode == "test":
-                with open(f"{pickles_path}/drift_corresp.pkl", "ab") as file:
-                    pickle.dump(dict_drift, file)          
-"""
-
-        
     
 @hydra.main(config_path="./configs", config_name="train", version_base="1.3.2")
 def main(cfg: DictConfig):
@@ -133,78 +99,132 @@ def main(cfg: DictConfig):
     pk = {"Noms_harmo":"nom", "cognom1_harmo":"cognom_1", "cognom2_harmo":"cognom_2", "parentesc_har":"parentesc", "ocupacio":"ocupacio"}
     
     #  ^ Hydra things
- 
     epochs = CFG_SETUP.configuration.epochs
     batch_size = CFG_DATA.collator.batch_size
     shuffle = CFG_DATA.collator.shuffle
-    number_volum_years = len(CFG_DATA.dataset.volumes) 
-    checkpoint_name = CFG_MODELS.name_checkpoint
-    optimize = CFG_SETUP.configuration.optimize_task
-    embedding_size = CFG_MODELS.common_configuration.embedding_size
+    partitions_ratio = CFG_DATA.collator.partitions_ratio
     # ^ 
 
     ## & Extract the dataset and the information in this case 
-    volumes = pipes.load_volumes(cfg=CFG_DATA) 
-    image_dataset = CEDDataset(Volumes=volumes, cfg=CFG_DATA.dataset)
+    ### Ced dataset needs path, volume_years, attributes
+    path_dataset = CFG_DATA.dataset.path
+    volumes_years = CFG_DATA.dataset.volumes_years
+    attributes = CFG_DATA.dataset.attributes
+    image_dataset = CEDDataset(path=path_dataset, volumes_years=volumes_years, attributes=attributes)
+    
+    standarized_width = ceil(np.mean(image_dataset.line_widths))
+    standarized_height = ceil(np.mean(image_dataset.line_heights))
+    
 
+    
+    image_dataset.define_transforms(new_shape=(standarized_height + 100, standarized_width))
+    
+    ## & Extract the dataset and the information in this case 
+    
+    
+    ## & Generator
+    generator = torch.Generator().manual_seed(2)
+    ## & Generator
+    
+    ## & Dataset random partitions
+    train_dataset, validation_dataset, test_dataset = torch.utils.data.random_split(image_dataset, partitions_ratio, generator=generator)
+    ## & Dataset random partitions
+    
+    
+    ## & Graph Dataset
     df_transcriptions = image_dataset._total_gt
     n_different_individuals = image_dataset._total_individual_nodes
     graphset = Graphset(total_nodes=n_different_individuals,
                         df_transcriptions=df_transcriptions,
-                        n_volumes=len(volumes),
+                        n_volumes=len(volumes_years),
                         graph_configuration=CFG_DATA.graph_configuration,
                         auxiliar_entities_pk = pk)
-
-    sampler = AttributeSampler(graph=graphset._graph, batch_size=batch_size, shuffle=shuffle)
+    ## & Graph Dataset
+    
 
     print("Generating DataLoader")
 
-    train_loader = DataLoader(dataset=image_dataset, 
+    train_loader = DataLoader(dataset=train_dataset, 
                             batch_size = batch_size,
-                            sampler=sampler._train_population,
+                            collate_fn=image_dataset.collate_fn,
+                            num_workers=8,
+                            pin_memory=True,
+                            shuffle=shuffle)
+
+    validation_loader = DataLoader(dataset=validation_dataset, 
+                            batch_size = 1,
                             collate_fn=image_dataset.collate_fn,
                             num_workers=0,
                             pin_memory=True)
 
-    validation_loader = DataLoader(dataset=image_dataset, 
-                            batch_size = batch_size,
-                            sampler=sampler._validation_population,
-                            collate_fn=image_dataset.collate_fn,
-                            num_workers=0,
-                            pin_memory=True)
-
-    test_loader = DataLoader(dataset=image_dataset, 
-                            batch_size = batch_size,
-                            sampler=sampler._test_population,
+    test_loader = DataLoader(dataset=test_dataset, 
+                            batch_size = 1,
                             collate_fn=image_dataset.collate_fn,
                             num_workers=0,
                             pin_memory=True)
                             
 
     total_loader = DataLoader(dataset=image_dataset, 
-                            batch_size = batch_size,
+                            batch_size = 1,
                             collate_fn=image_dataset.collate_fn,
                             num_workers=0,
-                            shuffle=True,
+                            shuffle=False,
                             pin_memory=True)
 
     
-    #? 
+ 
     print("DATA LOADED SUCCESFULLY")
     ## ^ Model 
 
-    H = image_dataset.general_height 
-    W = image_dataset.general_width // 16
 
-    CFG_MODELS.edge_visual_encoder.input_atention_mechanism = H*W
-
-    model = MMGCM(visual_encoder=VE.LineFeatureExtractor, gnn_encoder=gnn.AttributeGNN, edge_encoder=EVE.EdgeAttFeatureExtractor, cfg=CFG_MODELS).to(device)
+    ## ^ Vision Extractor Model
     
-    if CFG_MODELS.finetune is True:
-        model_name = f"./checkpoints/{checkpoint_name}.pt"
+    VISUAL_ENCODER = instantiate(CFG_MODELS.visual_encoder.model)
+    
+    if CFG_MODELS.visual_encoder.finetune == True:
+        checkpoint_name = CFG_MODELS.visual_encoder.checkpoint
+        VISUAL_ENCODER.load_state_dict(torch.load(checkpoint_name))
+        print("Visual model Loaded Succesfully Starting Finetunning")
         
-        model.load_state_dict(torch.load(model_name))
-        print("Model Loaded Succesfully Starting Finetunning")
+        if CFG_MODELS.visual_encoder.freeze:
+            for params in VISUAL_ENCODER.parameters():
+                params.requires_grad = False
+
+        
+    ## ^ Vision Extractor Model
+    
+    ## ^ Edge Disentanglement model
+
+    EDGE_MODEL = instantiate(CFG_MODELS.edge_visual_encoder.model)
+
+    if CFG_MODELS.edge_visual_encoder.finetune == True:
+        checkpoint_name = CFG_MODELS.edge_visual_encoder.checkpoint
+        EDGE_MODEL.load_state_dict(torch.load(checkpoint_name))
+        print("Edge model Loaded Succesfully Starting Finetunning")
+        
+    ## ^ Edge Disentanglement model
+
+
+    ## ^ GNN Model
+    
+    GNN_MODEL = instantiate(CFG_MODELS.gnn_encoder.model, n_different_edges=len(attributes))
+    
+    if CFG_MODELS.gnn_encoder.finetune == True:
+        checkpoint_name = CFG_MODELS.gnn_encoder.checkpoint
+        GNN_MODEL.load_state_dict(torch.load(checkpoint_name))
+        print("GNN model Loaded Succesfully Starting Finetunning")
+            
+    ## ^ GNN Model
+    
+    
+    ## ** Merged Model
+    model = MMGCM(visual_encoder=VISUAL_ENCODER,
+                  gnn_encoder=GNN_MODEL,
+                  edge_encoder=EDGE_MODEL,
+                  n_different_edges=len(attributes)).to(device)
+    ## ** Merged Model
+    
+    print("MODELS LOADED SUCCESFULLY")
     
     optimizer = hydra.utils.instantiate(CFG_SETUP.optimizer, params=model.parameters())
 
@@ -224,22 +244,6 @@ def main(cfg: DictConfig):
     nodes_to_compute_loss = CFG_SETUP.configuration.compute_loss_on
     core_graph = graphset._graph
 
-    if CFG_MODELS.add_language is True:
-        
-        filepath  = f"embeddings/language_embeddings_{number_volum_years}_{embedding_size}_entities_{len(CFG_SETUP.configuration.compute_loss_on)}.pkl"
-        
-        if os.path.exists(filepath):
-            language_embeddings = utils.read_pickle(filepath)
-                
-        else:
-            language_embeddings = utils.extract_language_embeddings(list(image_dataset._map_ocr.keys()), embedding_size=embedding_size, filepath=filepath)
-    
-        print("LANGUAGE EMBEDDINGS EXTRACTED SUCCESFULLY")
-    
-        core_graph.x_language = language_embeddings
-
-        print(image_dataset._map_ocr)
-
 
     core_graph.epoch_populations = image_dataset._population_per_volume
     
@@ -249,90 +253,93 @@ def main(cfg: DictConfig):
                     swap=False,
                     smooth_loss=False,
                     triplets_per_anchor="all")
+    
+    
+    ## **Scheduler
+    num_warmup_steps = 500  
+    train_loader_len = len(train_loader)  # Assuming you have defined train_loader
+    total_steps = epochs * train_loader_len
+    num_cycles = epochs // 2
+    
+    scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=total_steps,
+        num_cycles=num_cycles,
+    )
+    ## **
 
-                    
-    for epoch in range(epochs):
-        print(f"Epoch {epoch}")
-        
-        if epoch == 0:
-            print("SAVING TRAINING MODEL")
-            os.makedirs(f"./checkpoints/{checkpoint_name}", exist_ok=True)
-            model_name = f"./checkpoints/{checkpoint_name}/{checkpoint_name}_train_{epoch}.pt"
-            torch.save(model.state_dict(), model_name)
-            
-            print("EVALUATING STEP")
-            validation_loss = pipes.evaluate(
-                                    loader=validation_loader,
-                                    graph=core_graph, 
-                                    model=model, 
-                                    criterion=criterion,
-                                    entities=nodes_to_compute_loss,
-                                    language_distillation=CFG_MODELS.add_language)
+    optimal_loss = 10000
+    ## Start the training
+    print("CREATING THE BASELINE METRIC VALUE\n STARTING TO EVALUATE FO THE FIRST TIME")
+    loss_validation = pipes.evaluate(loader=validation_loader,
+                                 graph=core_graph,
+                                 model=model,
+                                 criterion=criterion,
+                                 entities=nodes_to_compute_loss)
+    
+    _, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
+                                actual_metric=loss_validation, 
+                                model=model, 
+                                checkpoint_path=checkpoint_name, 
+                                compare="<")
 
-            
-            wandb.log({"Validation Loss": validation_loss})
-            if validation_loss < optimal_loss:
-                print("UPDATING THE MODEL...")
-                os.makedirs("./checkpoints", exist_ok=True)
-                model_name = f"./checkpoints/{checkpoint_name}.pt"
+    print(f"Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
+       
+    for epoch in tqdm.tqdm(range(epochs), desc="Training Process", position=0, leave=False):
 
 
-                torch.save(model.state_dict(), model_name)
-                optimal_loss = validation_loss
-
-        loss  = pipes.batch_step(loader=train_loader,
+        train_loss  = pipes.batch_step(loader=train_loader,
                                 graph=core_graph, 
                                 model=model, 
                                 criterion=criterion, 
                                 optimizer=optimizer,
-                                entities=nodes_to_compute_loss, 
+                                entities=nodes_to_compute_loss,
+                                scheduler=scheduler, 
                                 epoch=epoch)
 
-        
-        if (epoch +1) % 10 == 0:
-            print("SAVING TRAINING MODEL")
-            os.makedirs(f"./checkpoints/{checkpoint_name}", exist_ok=True)
-            model_name = f"./checkpoints/{checkpoint_name}/{checkpoint_name}_train_{epoch}.pt"
-            torch.save(model.state_dict(), model_name)
+        current_lr = scheduler.get_last_lr()[0]  # Get current learning rate (from scheduler)
+        print(f"Loss Epoch: {epoch} Value: {train_loss} LR: {current_lr:.6f}")
 
-            validation_loss = pipes.evaluate(
+        if (epoch +1) % 10 == 0:
+
+            loss_validation = pipes.evaluate(
                                     loader=validation_loader,
                                     graph=core_graph, 
                                     model=model, 
                                     criterion=criterion,
                                     entities=nodes_to_compute_loss,
                                     language_distillation=CFG_MODELS.add_language)            
-            
-            wandb.log({"Validation Loss": validation_loss})
 
-            if validation_loss < optimal_loss:
-                print("UPDATING THE MODEL...")
-
-                os.makedirs("./checkpoints", exist_ok=True)
-                model_name = f"./checkpoints/{checkpoint_name}.pt"
-
-                torch.save(model.state_dict(), model_name)
-                optimal_loss = validation_loss
-
-             
-
+            updated, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
+                                        actual_metric=loss_validation, 
+                                        model=model, 
+                                        checkpoint_path=checkpoint_name, 
+                                        compare="<")
+            if updated:
+                print(f"Model Updated: Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
+                
+                
 
     model.load_state_dict(torch.load(model_name))
     
-    test_loss = pipes.evaluate(
-                            loader=test_loader,
-                                    graph=core_graph, 
-                                    model=model, 
-                                    criterion=criterion,
-                                    entities=nodes_to_compute_loss,
-                                    language_distillation=CFG_MODELS.add_language)
-                
-    if test_loss < optimal_loss:
-        print("UPDATING THE MODEL...")
-        os.makedirs("./checkpoints", exist_ok=True)
-        model_name = f"./checkpoints/{checkpoint_name}.pt"
+    loss_test = pipes.evaluate(
+                loader=test_loader,
+                graph=core_graph, 
+                model=model, 
+                criterion=criterion,
+                entities=nodes_to_compute_loss,
+                language_distillation=CFG_MODELS.add_language)
 
-        torch.save(model.state_dict(), model_name)
+
+    updated, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
+                                actual_metric=loss_test, 
+                                model=model, 
+                                checkpoint_path=checkpoint_name, 
+                                compare="<")
+    
+    if updated:
+        print(f"Model Updated on Test")
     
     wandb.finish()
 

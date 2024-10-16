@@ -78,11 +78,10 @@ class Graphset():
         Initializes nodes in the graph with placeholders for each kind of node attribute and all attributes.
         """
         self._graph.x_attributes = torch.zeros(size=(self._total_individual_nodes, len(self.attribute_type_of_nodes), self._node_embedding_size), dtype=torch.float32)
-        self._graph.x_entity = torch.zeros(size=(self._total_individual_nodes, len(self.entity_type_of_nodes), self._node_embedding_size), dtype=torch.float32)
-        self._graph.map_attribute_nodes = {idx: node_type for idx, node_type in enumerate(self.attribute_type_of_nodes)}
-        self._graph.map_entity_nodes = {idx: node_type for idx, node_type in enumerate(self.entity_type_of_nodes)}
+        self._graph.x_entity = torch.zeros(size=(self._total_individual_nodes, self._node_embedding_size), dtype=torch.float32)
+        self._graph.map_attribute_nodes = {node_type: idx for idx, node_type in enumerate(self.attribute_type_of_nodes)}
+        self._graph.map_entity_nodes = {node_type: idx for idx, node_type in enumerate(self.entity_type_of_nodes)}
         
-            
             
     def _initialize_edges(self):
         self.__initialize_individual_attribute_edges() ## every line has the sma index name and surname because is a replication

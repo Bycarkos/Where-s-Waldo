@@ -1,16 +1,12 @@
 import torch.nn as nn
 import torch
 
-
-import math
-from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 import pdb
 
 device = "cuda" if torch.cuda.is_available else "cpu"
 
-from transformers import TrOCRProcessor
 
 #    min_height=kernel_height, max_width=kernel_width, hidden_channels=64, output_channels=128, num_hidden_convolutions=3
 
@@ -54,25 +50,24 @@ class LineFeatureExtractor(nn.Module):
         return x
     
 
-
 class LineAutoEncoder(nn.Module):
 
 
-    def __init__(self, cfg:DictConfig):
+    def __init__(self, input_channels:int, 
+                 hidden_channels:int, 
+                 output_channels:int,
+                 num_middle_conv:int):
 
 
         super(LineAutoEncoder, self).__init__()
 
-        self._height = cfg.kernel_height
-        self._width = cfg.kernel_width
         
-        self._kernels = list(zip(self._height, self._width))
 
-        self._input_channels = cfg.input_channels
-        self._hidden_channels = cfg.hidden_channels
-        self._output_channels = cfg.output_channels
+        self._input_channels = input_channels
+        self._hidden_channels = hidden_channels
+        self._output_channels = output_channels
 
-        self._num_middle_conv = cfg.number_of_hidden_convolutions
+        self._num_middle_conv = num_middle_conv
 
         if self._num_middle_conv == 1:
             self._norm = nn.BatchNorm2d(self._hidden_channels)

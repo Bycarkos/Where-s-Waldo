@@ -14,14 +14,14 @@ from omegaconf import DictConfig
 class MMGCM(nn.Module):
 
     def __init__(self, visual_encoder: Type[nn.Module], gnn_encoder: Type[nn.Module],
-                  edge_encoder: Optional[List[Type[nn.Module]]] = None) -> None:
+                  edge_encoder: Optional[List[Type[nn.Module]]] = None, **kwargs) -> None:
         super(MMGCM, self).__init__()
 
 
         self._visual_encoder = visual_encoder
         self._gnn_encoder = gnn_encoder
 
-        self._edge_encoders = edge_encoder
+        self._edge_encoders = nn.ModuleList([edge_encoder for i in range(kwargs.get("n_different_edges", 1))])
 
 
     def load_weights_visual_encoder(self, path):
@@ -54,11 +54,9 @@ class MMGCM(nn.Module):
         return messages
     
     
-    def encode_attribute_information(self,image_features:[TensorType["batch", "d"]],  # type: ignore
-                edge_attributes: [TensorType["batch", "Nattributes", "d"]]) -> TensorType["batch", "|E|", "d"]:         # type: ignore
-        
-
-        return self._gnn_encoder(image_features=image_features, edge_attributes=edge_attributes)
+    def encode_attribute_information(self, x:TensorType["batch", "|E|", "d"]) -> TensorType["batch", "|E|", "d"]:         # type: ignore
+    
+        return self._gnn_encoder(x = x)
     
             
     def forward(self, x: TensorType["batch", "(C, H, W)"]):
@@ -66,6 +64,6 @@ class MMGCM(nn.Module):
         image_features = self.encode_visual_information(x)
         edge_features = self.encode_edge_positional_information(image_features)
 
-        attribute_representation, individual_embeddings = self.encode_attribute_information(image_features, edge_features)
+        attribute_representation, individual_embeddings = self.encode_attribute_information(edge_features)
 
         return attribute_representation, individual_embeddings

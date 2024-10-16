@@ -247,15 +247,11 @@ def main(cfg: DictConfig):
     # *
 
 
-    #visu.plot([list_of_datasets[0][0][0]])
-
     # * Dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, pin_memory=True, num_workers=8, collate_fn=collate_fn)
     validation_loader = DataLoader(validation_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=0, collate_fn=collate_fn)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=shuffle, pin_memory=True, num_workers=1, collate_fn=collate_fn)
     # *
-    
-
     
 
     print("DATA LOADER SUCCESFULLY GENERATED")
@@ -309,7 +305,6 @@ def main(cfg: DictConfig):
 
     print(f"Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
     
-    #wandb.log({"Validation Loss": loss_validation})
     x_kernel, y_kernel = utils.get_sobel_kernel(device=device, chnls=3)
     
     for epoch in tqdm.tqdm(range(epochs), desc="Training Process", position=0, leave=False):

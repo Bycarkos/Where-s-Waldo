@@ -71,8 +71,8 @@ def plot(imgs, row_title=None, **imshow_kwargs):
             axs[row_idx, 0].set(ylabel=row_title[row_idx])
 
     plt.tight_layout()
-    plt.show()
-    #plt.savefig("dummy_example_batch.png")
+    #plt.show()
+    plt.savefig("dummy_example_batch.png")
 
 
 def adjacent_values(vals, q1, q3):

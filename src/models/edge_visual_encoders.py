@@ -154,6 +154,7 @@ class DisentanglementAttentionEncoder(nn.Module):
 
     def __init__(self, in_features:int, out_features:int) -> None:
         
+        super(DisentanglementAttentionEncoder, self).__init__()
 
         self._in_features = in_features
         self._out_features= out_features
@@ -171,8 +172,7 @@ class DisentanglementAttentionEncoder(nn.Module):
         keys = self._K(embeddings)
         values = self._V(embeddings)
 
-        x, self._attention_values = self._attention_mechanism(query=queries,
-                                                              key=keys,
-                                                              value=values)
-        
-        return x
+        x, self._attention_values = self._attention_mechanism(query=queries[:,:, None],
+                                                              key=keys[:,:, None],
+                                                              value=values[:,:, None])
+        return x.squeeze(-1)

@@ -42,6 +42,7 @@ class ScaledDotProductAttention(nn.Module):
 
         attn = F.softmax(score, -1)
         context = torch.bmm(attn, value)
+        
         return context, attn
 
 
@@ -49,7 +50,7 @@ class DotProductAttention(nn.Module):
     """
     Compute the dot products of the query with all values and apply a softmax function to obtain the weights on the values
     """
-    def __init__(self, hidden_dim):
+    def __init__(self,):
         super(DotProductAttention, self).__init__()
 
     def forward(self, query: Tensor, value: Tensor) -> Tuple[Tensor, Tensor]:

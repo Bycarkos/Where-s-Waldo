@@ -685,3 +685,84 @@ class EdgeAttFeatureExtractor(nn.Module):
         ## Extract the ocr
 
 """
+
+"""
+    ## ^ Model 
+
+    H = image_dataset.general_height 
+    W = image_dataset.general_width // 16
+
+    CFG_MODELS.edge_visual_encoder.input_atention_mechanism = H*W
+
+    model = MMGCM(visual_encoder=VE.LineFeatureExtractor, gnn_encoder=gnn.AttributeGNN, edge_encoder=EVE.EdgeAttFeatureExtractor, cfg=CFG_MODELS).to(device)
+    
+    if CFG_MODELS.finetune is True:
+        model_name = f"./checkpoints/{checkpoint_name}.pt"
+        
+        model.load_state_dict(torch.load(model_name))
+        print("Model Loaded Succesfully Starting Finetunning")
+    
+    optimizer = hydra.utils.instantiate(CFG_SETUP.optimizer, params=model.parameters())
+
+    if cfg.verbose == True:
+        print("Configuration of the Models: ")
+        bprint(dict(CFG_MODELS))
+
+    if cfg.verbose == True:
+        print("Inizialization Done without problemas")
+        print("Starting the training proces with the following configuration: ")
+        bprint(dict(CFG_SETUP.configuration)) 
+    
+    ## ^  
+
+    optimal_loss = 10000
+    
+    nodes_to_compute_loss = CFG_SETUP.configuration.compute_loss_on
+    core_graph = graphset._graph
+
+    if CFG_MODELS.add_language is True:
+        
+        filepath  = f"embeddings/language_embeddings_{number_volum_years}_{embedding_size}_entities_{len(CFG_SETUP.configuration.compute_loss_on)}.pkl"
+        
+        if os.path.exists(filepath):
+            language_embeddings = utils.read_pickle(filepath)
+                
+        else:
+            language_embeddings = utils.extract_language_embeddings(list(image_dataset._map_ocr.keys()), embedding_size=embedding_size, filepath=filepath)
+    
+        print("LANGUAGE EMBEDDINGS EXTRACTED SUCCESFULLY")
+    
+        core_graph.x_language = language_embeddings
+
+        print(image_dataset._map_ocr)
+
+
+    core_graph.epoch_populations = image_dataset._population_per_volume
+    
+    
+    
+    criterion = losses.TripletMarginLoss(margin=0.2,
+                    swap=False,
+                    smooth_loss=False,
+                    triplets_per_anchor="all")
+
+"""
+
+
+
+"""
+            edge_similar_names = [(attribute, "similar", attribute) for attribute in entities]
+            
+            similar_populations = [
+                subgraph[edge].flatten().unique().to(device) for edge in edge_similar_names
+            ]
+            labels_list = [torch.isin(population, sp).to(torch.int32) for sp in similar_populations]
+            labels = torch.stack(labels_list, dim=0)  # Stack into a batch tensor
+            
+            individual_mask = torch.tensor([attribute == "individual" for attribute in entities])
+            embeddings = torch.where(individual_mask.unsqueeze(-1).unsqueeze(-1),
+                                    individual_embeddings.unsqueeze(0),  # Broadcasting for individuals
+                                    attribute_representation.permute(1, 0, 2))
+            
+            loss = criterion(embeddings, labels)
+"""

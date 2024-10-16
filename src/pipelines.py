@@ -1,8 +1,3 @@
-## Dataset Things
-from data.volumes import Volume, Page, Line
-from data.graphset import Graphset
-
-import data.volumes as dv
 
 
 ## Model Things
@@ -13,64 +8,32 @@ from models.graph_construction_model import MMGCM
 
 import utils
 import visualizations as visu
-import tasks.record_linkage as rl
 
 ## Common packages
 import torch.nn as nn
 import torch
-import torchvision.transforms as T
-import torchvision.transforms.functional as transforms
 from torch.utils.data import DataLoader
-
 from torch_geometric.data import HeteroData
 import torch_geometric.utils as tutils
-
-
 from pytorch_metric_learning import miners, losses
 
 
 
 ## Typing Packages
 from typing import *
-from torchtyping import TensorType
+from jaxtyping import Float, Array
 
-## Configuration Package
-from omegaconf import DictConfig, OmegaConf
-
-
-import tqdm
-
-import fasttext
 
 ## Common packages
-import os
-import json
-import glob
-import pandas as pd
-from pathlib import Path
-from PIL import Image
-import matplotlib.pyplot as plt
 import copy
-import pickle
-import networkx as nx
 from networkx.algorithms import bipartite
 import numpy as np
 import wandb
-import itertools
-import random
+import tqdm
 
 
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-
-
-
-import umap
-import umap.plot
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-import pprint
-from beeprint import pp as bprint
 import pdb
 
 
@@ -96,62 +59,69 @@ def evaluate(loader: Type[DataLoader],
              graph: Type[HeteroData],
              model: Type[nn.Module],
              criterion: Type[nn.Module],
-             entities:list,
-             language_distillation:bool=False):
+             entities:list):
 
 
-    model.eval()
-
-    attribute_embeddings = graph.x_attributes.to(device)
-    entity_embeddings = graph.x_entity.to(device)
-
-    core_graph = graph
-    if language_distillation:
-        x_ocr = torch.from_numpy(np.array(graph.x_language)).to(device)
-
-
-    ## Attribute embeddings Extraction 
-    for idx, dict_images in tqdm.tqdm(enumerate(loader), desc="Extracting the embeddings from the model"):
+    
+    image_embeddings = []
+    attribute_embeddings = []
+    individual_entity_embeddings = []
+    population_final = []
+    
+    for idx, dict_images in tqdm.tqdm(enumerate(loader), desc="Validation/Test Extracting Embeddings", leave=True, position=1):
         images = dict_images["image_lines"].to(device)
-        ocr_indexes = dict_images["ocrs"].to(device)
+
         population = dict_images["population"].to(device)
-
-        attribute_representation, individual_embeddings = model(x=images)#.encode_attribute_information(image_features=image_features, edge_attributes=edge_features) #message_passing
-        attribute_embeddings[population] = attribute_representation
-        if individual_embeddings is not None:
-            entity_embeddings[population, 0] = individual_embeddings
-            
-            
-        loss = 0
-        edges_to_keep = [(attribute, "similar", attribute) for attribute in entities]
-        subgraph = utils.extract_subgraph(graph=graph, population=population, edges_to_extract=edges_to_keep)
-        for idx, attribute in enumerate(entities):
-            
-
-            edge_similar_name = (attribute, "similar", attribute)
-            similar_population = subgraph[edge_similar_name].flatten().unique().to(device)                
-            labels = torch.isin(population, similar_population).type(torch.int32)
-            if attribute == "individual":
-                embeddings = individual_embeddings
-                
-            else:
-                embeddings = attribute_representation[:, idx,:]
-            
-                
-                if language_distillation:
-
-                    selected_language_embeddings_idx = ocr_indexes[:, idx].type(torch.int32) 
-                    language_embeddings = x_ocr[selected_language_embeddings_idx,:]
-
-                    labels = torch.cat((labels, labels), dim=0)
-                    embeddings = torch.cat((embeddings, language_embeddings), dim=0)
-
-            loss_attribute = criterion(embeddings, labels)
-            loss += (loss_attribute)
         
+
+        image_embedding = model.encode_visual_information(images)
+        
+        image_embeddings.append(image_embedding)
+        
+        attribute_representation, individual_embeddings = model(x=images)
+        
+        attribute_embeddings.append(attribute_representation)
+        individual_entity_embeddings.append(individual_embeddings)
+    
+        population_final.append(population)
+    
+    population_final = torch.cat(population_final, dim=-1)
+    ## Extracting information
+    attribute_embeddings = torch.cat(attribute_embeddings, dim=0)
+    individual_entity_embeddings = torch.cat(individual_entity_embeddings, dim=0)
+    visual_embeddings = torch.cat(image_embeddings, dim=0)
+    
+    edges_to_keep = [(attribute, "similar", attribute) for attribute in entities]
+    subgraph = utils.extract_subgraph(graph=graph, population=population_final, edges_to_extract=edges_to_keep)
+    loss = 0
+    
+    for idx, attribute in  tqdm.tqdm(enumerate(entities), desc="Computing Loss of Validation/Test", leave=True, position=2):
+        
+
+        edge_similar_name = (attribute, "similar", attribute)
+        similar_population = subgraph[edge_similar_name].flatten().unique().to(device)                
+        labels = torch.isin(population_final, similar_population).type(torch.int32)
+        
+        if attribute == "individual":
+            embeddings = individual_entity_embeddings
+            
+        else:
+            embeddings = attribute_embeddings[:, idx,:]
+            
+        loss_attribute = criterion(embeddings, labels)
+        loss += (loss_attribute)
+    
 
     print("VALIDATION LOSS: ", loss)
     
+    
+    population_final = population_final.to("cpu")
+        ## Update the information in the graph
+    graph.x_attributes[population_final] = attribute_embeddings.to("cpu")
+    graph.x_image_entity = visual_embeddings.to("cpu")   
+    graph.x_entity[population_final] = individual_entity_embeddings.to("cpu")
+    
+    exit()
     return loss
 
 
@@ -164,8 +134,9 @@ def batch_step(loader,
                graph:Type[HeteroData], 
                model: Type[nn.Module],
                optimizer: Type[torch.optim.Adam],
-               criterion,
+               criterion: Type[nn.Module],
                entities: Tuple[str, ...],
+               scheduler,
                epoch: int,
                language_distillation:bool=False):
 
@@ -203,15 +174,6 @@ def batch_step(loader,
         
 
         model.train()
-            
-        miner = miners.PairMarginMiner(pos_margin=0.2, neg_margin=0.8)
-        
-
-
-        criterion = losses.TripletMarginLoss(margin=0.2,
-                        swap=False,
-                        smooth_loss=False,
-                        triplets_per_anchor="all")
         
         epoch_train_loss = 0
         epoch_entities_losses = {key+"_train_loss":0 for key in entities}
@@ -224,7 +186,7 @@ def batch_step(loader,
             optimizer.zero_grad()
 
             images = dict_images["image_lines"].to(device)
-            ocr_indexes = dict_images["ocrs"].to(device)
+            #ocr_indexes = dict_images["ocrs"].to(device)
             population = dict_images["population"].to(device)
 
             attribute_representation, individual_embeddings = model(x=images)#.encode_attribute_information(image_features=image_features, edge_attributes=edge_features) #message_passing
@@ -235,24 +197,31 @@ def batch_step(loader,
             batch_entites_loss = copy.copy(epoch_entities_losses)
             edges_to_keep = [(attribute, "similar", attribute) for attribute in entities]
             subgraph = utils.extract_subgraph(graph=graph, population=population, edges_to_extract=edges_to_keep)
+
+            
             for idx, attribute in enumerate(entities):
                 
 
                 edge_similar_name = (attribute, "similar", attribute)
                 similar_population = subgraph[edge_similar_name].flatten().unique().to(device)                
+                
                 labels = torch.isin(population, similar_population).type(torch.int32)
+                # Select embeddings based on the attribute
                 if attribute == "individual":
                     embeddings = individual_embeddings
-                    
                 else:
-                    embeddings = attribute_representation[:, idx,:]
+                    embeddings = attribute_representation[:, idx, :]
 
                     
-                    if language_distillation:         
-                        selected_language_embeddings_idx = ocr_indexes[:, idx].type(torch.int32) 
-                        language_embeddings = x_ocr[selected_language_embeddings_idx,:]
-                        labels = torch.cat((labels, labels), dim=0)
-                        embeddings = torch.cat((embeddings, language_embeddings), dim=0)
+                # Only compute language distillation if enabled
+                if language_distillation:
+                    ocr_indexes = dict_images["ocrs"].to(device)
+                    selected_language_embeddings_idx = ocr_indexes[:, idx].to(torch.int32)
+                    language_embeddings = x_ocr[selected_language_embeddings_idx, :]
+                    
+                    # Concatenate embeddings and labels in a single operation
+                    labels = torch.cat((labels, labels), dim=0)
+                    embeddings = torch.cat((embeddings, language_embeddings), dim=0)
 
                 loss_attribute = criterion(embeddings, labels)
                 loss += (loss_attribute) # + contrastive_loss_attribute) #distilattion_loss
@@ -261,6 +230,7 @@ def batch_step(loader,
 
             loss.backward()
             optimizer.step()
+            scheduler.step()
             
             
         
