@@ -66,4 +66,4 @@ class MMGCM(nn.Module):
 
         attribute_representation, individual_embeddings = self.encode_attribute_information(edge_features)
 
-        return attribute_representation, individual_embeddings
+        return attribute_representation, individual_embeddings, image_features

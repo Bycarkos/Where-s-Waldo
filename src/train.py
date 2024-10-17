@@ -87,7 +87,6 @@ def main(cfg: DictConfig):
         wandb.init(
             project= CFG_SETUP.wandb.project,
             config = dict(CFG_SETUP.wandb.config),
-            notes = CFG_SETUP.wandb.notes,
             name = CFG_SETUP.wandb.name,
             group = CFG_SETUP.wandb.group
         )
@@ -103,6 +102,7 @@ def main(cfg: DictConfig):
     batch_size = CFG_DATA.collator.batch_size
     shuffle = CFG_DATA.collator.shuffle
     partitions_ratio = CFG_DATA.collator.partitions_ratio
+    image_embedding_size = CFG_MODELS.visual_encoder.model.output_channels
     # ^ 
 
     ## & Extract the dataset and the information in this case 
@@ -139,6 +139,8 @@ def main(cfg: DictConfig):
                         n_volumes=len(volumes_years),
                         graph_configuration=CFG_DATA.graph_configuration,
                         auxiliar_entities_pk = pk)
+    
+    
     ## & Graph Dataset
     
 
@@ -246,6 +248,7 @@ def main(cfg: DictConfig):
 
 
     core_graph.epoch_populations = image_dataset._population_per_volume
+    core_graph.x_image_entity = torch.zeros(graphset._total_individual_nodes, image_embedding_size)
     
     
     
@@ -256,27 +259,33 @@ def main(cfg: DictConfig):
     
     
     ## **Scheduler
-    num_warmup_steps = 500  
+    num_warmup_steps = 1300  
     train_loader_len = len(train_loader)  # Assuming you have defined train_loader
     total_steps = epochs * train_loader_len
     num_cycles = epochs // 2
     
-    scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
+    scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=num_warmup_steps,
         num_training_steps=total_steps,
-        num_cycles=num_cycles,
+        #num_cycles=num_cycles,
     )
     ## **
 
     optimal_loss = 10000
+
+    checkpoint_name = CFG_MODELS.name_checkpoint
+
     ## Start the training
     print("CREATING THE BASELINE METRIC VALUE\n STARTING TO EVALUATE FO THE FIRST TIME")
+
+    
     loss_validation = pipes.evaluate(loader=validation_loader,
                                  graph=core_graph,
                                  model=model,
                                  criterion=criterion,
-                                 entities=nodes_to_compute_loss)
+                                 entities=nodes_to_compute_loss,
+                                 epoch=0)
     
     _, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
                                 actual_metric=loss_validation, 
@@ -320,8 +329,6 @@ def main(cfg: DictConfig):
                 print(f"Model Updated: Validation Loss Epoch: {0} Value: {loss_validation} Optimal_loss: {optimal_loss}")
                 
                 
-
-    model.load_state_dict(torch.load(model_name))
     
     loss_test = pipes.evaluate(
                 loader=test_loader,

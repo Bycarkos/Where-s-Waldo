@@ -321,12 +321,10 @@ def evaluate_attribute_metric_space(attribute_embeddings: np.ndarray,
     
     
 @torch.no_grad()
-def extract_intra_cluster_nearest_neighboors_at_k(x: TensorType,
+def extract_intra_cluster_nearest_neighboors_at_k(x: torch.Tensor,
                                                   top_k=10):
     #Graph = utils.read_pickle("pickles/graphset_3_volumes_128_entities_4.pkl")
 
-    dict_nearest_neighbors = {}
-    distances_dict = {}
     distances = torch.cdist(x, x, p=2)
     
     # Set the diagonal to a large positive number to avoid self-matching
@@ -338,6 +336,28 @@ def extract_intra_cluster_nearest_neighboors_at_k(x: TensorType,
     nearest_neighbors = {ix: top_k_indices[ix].tolist() for ix in range(distances.size(0))}
 
 
-    return nearest_neighbors, distances              
+    return nearest_neighbors, distances           
 
 
+def r_precision(relevant_documents, retrieved_documents):
+    """
+    Calculate the R-Precision metric.
+    
+    Parameters:
+    relevant_documents (list): List of relevant document IDs.
+    retrieved_documents (list): List of retrieved document IDs in ranked order.
+
+    Returns:
+    float: R-Precision score.
+    """
+    # The number of relevant documents in the ground truth
+    R = len(relevant_documents)
+    
+    # Take the top-R retrieved documents
+    top_r_retrieved = retrieved_documents[:R]
+    
+    # Count how many of the top-R retrieved documents are relevant
+    relevant_retrieved_count = len(set(top_r_retrieved) & set(relevant_documents))
+    
+    # R-Precision is the ratio of relevant documents retrieved in top-R to R
+    return relevant_retrieved_count / (R) 
