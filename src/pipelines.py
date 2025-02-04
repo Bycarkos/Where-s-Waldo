@@ -124,12 +124,10 @@ def evaluate(loader: Type[DataLoader],
     graph.x_image_entity[population_final] = visual_embeddings.to("cpu")   
     graph.x_entity[population_final] = individual_entity_embeddings.to("cpu")
 
-    metrics_R_precission = updload_r_precission(graph=graph)
+    metrics_R_precission, general_metrics = updload_r_precission(graph=graph)
     
-    wandb.log(epoch_entities_losses, step=epoch)
-
-    for ke, dict_value in metrics_R_precission.items():
-        wandb.log(dict_value, step=epoch)
+    wandb.log(epoch_entities_losses)
+    wandb.log(general_metrics)
 
 
     return loss
@@ -143,6 +141,9 @@ def updload_r_precission(graph: Type[HeteroData]) -> Dict:
 
     }
 
+    general_metrics = {
+            
+        }
     computed_freq_name = {name: len(values) for name, values in graph["nom"].map_attribute_index.items() if len(values) > 10}
     computed_freq_surname = {name: len(values) for name, values in graph["cognom_1"].map_attribute_index.items() if len(values) > 10}
     computed_freq_ssurname = {name: len(values) for name, values in graph["cognom_2"].map_attribute_index.items() if len(values) > 10}
@@ -194,11 +195,11 @@ def updload_r_precission(graph: Type[HeteroData]) -> Dict:
 
             metrics_R_precission[att][f"{att}/{content_attribute}"] = value
 
-        metrics_R_precission[att][f"high_mean_recall/{att}"] = att_mean_high/(count_high)
-        metrics_R_precission[att][f"low_mean_recall/{att}"] = att_mean_low/(count_low)
-        metrics_R_precission[att][f"mean_recall/{att}"] = att_mean/(attribute_embeddings.shape[0])
+        general_metrics[f"high_mean_recall/{att}"] = att_mean_high/(count_high)
+        general_metrics[f"low_mean_recall/{att}"] = att_mean_low/(count_low)
+        general_metrics[f"mean_recall/{att}"] = att_mean/(attribute_embeddings.shape[0])
 
-    return metrics_R_precission
+    return metrics_R_precission, general_metrics
 
 
 def batch_step(loader, 

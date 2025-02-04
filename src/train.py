@@ -149,7 +149,7 @@ def main(cfg: DictConfig):
     train_loader = DataLoader(dataset=train_dataset, 
                             batch_size = batch_size,
                             collate_fn=image_dataset.collate_fn,
-                            num_workers=8,
+                            num_workers=16,
                             pin_memory=True,
                             shuffle=shuffle)
 
@@ -259,7 +259,7 @@ def main(cfg: DictConfig):
     
     
     ## **Scheduler
-    num_warmup_steps = 1300  
+    num_warmup_steps = 500  
     train_loader_len = len(train_loader)  # Assuming you have defined train_loader
     total_steps = epochs * train_loader_len
     num_cycles = epochs // 2
@@ -311,14 +311,12 @@ def main(cfg: DictConfig):
         print(f"Loss Epoch: {epoch} Value: {train_loss} LR: {current_lr:.6f}")
 
         if (epoch +1) % 10 == 0:
-
-            loss_validation = pipes.evaluate(
-                                    loader=validation_loader,
-                                    graph=core_graph, 
-                                    model=model, 
-                                    criterion=criterion,
-                                    entities=nodes_to_compute_loss,
-                                    language_distillation=CFG_MODELS.add_language)            
+            loss_validation = pipes.evaluate(loader=validation_loader,
+                                        graph=core_graph,
+                                        model=model,
+                                        criterion=criterion,
+                                        entities=nodes_to_compute_loss,
+                                        epoch=epoch)
 
             updated, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
                                         actual_metric=loss_validation, 
@@ -330,13 +328,12 @@ def main(cfg: DictConfig):
                 
                 
     
-    loss_test = pipes.evaluate(
-                loader=test_loader,
-                graph=core_graph, 
-                model=model, 
-                criterion=criterion,
-                entities=nodes_to_compute_loss,
-                language_distillation=CFG_MODELS.add_language)
+    loss_test = pipes.evaluate(loader=validation_loader,
+                                        graph=core_graph,
+                                        model=model,
+                                        criterion=criterion,
+                                        entities=nodes_to_compute_loss,
+                                        epoch=epoch)
 
 
     updated, optimal_loss = utils.update_and_save_model(previous_metric=optimal_loss, 
